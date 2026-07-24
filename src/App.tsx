@@ -197,7 +197,10 @@ const App: FC = () => {
 
           const expectedProvider = kymaKey ? 'Kyma' : 'Gemini';
           const expectedModel = kymaKey ? selectedKymaModel || 'deepseek-v4-flash' : selectedModel;
-          addToast('info', 'Đang phân cảnh...', `Sử dụng ${expectedProvider} (${expectedModel})`);
+          const initialMessage = kymaKey
+              ? `Đang thử Kyma trước (${expectedModel}), sẽ fallback Gemini nếu lỗi.`
+              : `Đang dùng Gemini (${expectedModel}).`;
+          addToast('info', 'Đang phân cảnh...', initialMessage);
 
           const stream = analyzeScriptWithAIStream(
               scenario,

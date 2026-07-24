@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { tokenizeSentences, segmentByWaterFilling, segmentByIndex, Sentence } from "../utils/textSegmentation";
+import { tokenizeSentences, segmentByWaterFilling, segmentByIndex, Sentence, ensureSceneCount } from "../utils/textSegmentation";
 import { Cache } from "../utils/cache";
 
 
@@ -302,7 +302,10 @@ const fetchSceneAnchors = async (
 
     const systemInstruction = `You are a storyboard director. Divide the script into EXACTLY ${targetSceneCount} logical scenes.
 The script is provided as a numbered list of sentences: [0] "...", [1] "...".
-Return ONLY a JSON array of exactly ${targetSceneCount} objects:
+Return ONLY a JSON array of EXACTLY ${targetSceneCount} objects. Do NOT return fewer or more than ${targetSceneCount} under any circumstance.
+If the script has more logical breaks than needed, merge short adjacent scenes. If it has fewer logical breaks, split longer scenes into multiple parts to ALWAYS hit ${targetSceneCount}.
+Each object must contain: sceneNumber (integer starting from 1), fromSentenceIdx (integer), toSentenceIdx (integer).
+Example for ${targetSceneCount} scenes:
 {
   "sceneNumber": 1,
   "fromSentenceIdx": 0,
@@ -492,9 +495,18 @@ export const analyzeScriptWithAI = async (
     let finalProvider = kymaKey ? "Kyma" : (apiKey ? "Gemini (User Key)" : "System Default");
     let finalModel = kymaKey ? kymaModelName : modelName;
 
+    // Guard: nếu không có key nào thì throw sớm
+    if (!kymaKey && !apiKey) {
+        throw new Error("Không có API key. Vui lòng cấu hình Kyma hoặc Gemini key trước khi phân cảnh.");
+    }
+
     const triggerFallback = () => {
-        finalProvider = "Gemini (User Key)";
-        finalModel = modelName;
+        if (apiKey) {
+            finalProvider = "Gemini (User Key)";
+            finalModel = modelName;
+        } else {
+            throw new Error("Kyma thất bại và không có Gemini key để fallback. Vui lòng thêm Gemini API key.");
+        }
     };
 
     // 1. PRE-SEGMENTATION (Tokenize + AI/Water-fill)
@@ -536,18 +548,9 @@ export const analyzeScriptWithAI = async (
 
         segmentedLines = segmentByIndex(sentences, anchors);
 
-        // Validation: Nếu AI trả thiếu số lượng, fallback tự băm bằng Water-filling phần còn thiếu.
+        // Fix: AI có thể trả thiếu anchors → đảm bảo đủ targetSceneCount
         if (segmentedLines.length < targetSceneCount) {
-            console.warn(`AI trả thiếu cảnh (${segmentedLines.length}/${targetSceneCount}), đang fallback bù bằng water-filling...`);
-            const missing = targetSceneCount - segmentedLines.length;
-            const lastHandledIdx = anchors.length > 0
-                ? Math.max(...anchors.map(a => a.toSentenceIdx))
-                : -1;
-            const remainingSentences = sentences.slice(lastHandledIdx + 1);
-            if (remainingSentences.length > 0) {
-                const fillScenes = segmentByWaterFilling(remainingSentences, missing);
-                segmentedLines = segmentedLines.concat(fillScenes);
-            }
+            segmentedLines = ensureSceneCount(segmentedLines, sentences, targetSceneCount);
         }
     } else if (segmentationMode === 'punctuation') {
         segmentedLines = sentences.map(s => s.text);
@@ -686,9 +689,18 @@ export const analyzeScriptWithAIStream = async function* (
     let finalProvider = kymaKey ? "Kyma" : (apiKey ? "Gemini (User Key)" : "System Default");
     let finalModel = kymaKey ? kymaModelName : modelName;
 
+    // Guard: nếu không có key nào thì throw sớm
+    if (!kymaKey && !apiKey) {
+        throw new Error("Không có API key. Vui lòng cấu hình Kyma hoặc Gemini key trước khi phân cảnh.");
+    }
+
     const triggerFallback = () => {
-        finalProvider = "Gemini (User Key)";
-        finalModel = modelName;
+        if (apiKey) {
+            finalProvider = "Gemini (User Key)";
+            finalModel = modelName;
+        } else {
+            throw new Error("Kyma thất bại và không có Gemini key để fallback. Vui lòng thêm Gemini API key.");
+        }
     };
 
     // 1. PRE-SEGMENTATION
@@ -728,16 +740,9 @@ export const analyzeScriptWithAIStream = async function* (
 
         segmentedLines = segmentByIndex(sentences, anchors);
 
+        // Fix: AI có thể trả thiếu anchors → đảm bảo đủ targetSceneCount
         if (segmentedLines.length < targetSceneCount) {
-            const missing = targetSceneCount - segmentedLines.length;
-            const lastHandledIdx = anchors.length > 0
-                ? Math.max(...anchors.map(a => a.toSentenceIdx))
-                : -1;
-            const remainingSentences = sentences.slice(lastHandledIdx + 1);
-            if (remainingSentences.length > 0) {
-                const fillScenes = segmentByWaterFilling(remainingSentences, missing);
-                segmentedLines = segmentedLines.concat(fillScenes);
-            }
+            segmentedLines = ensureSceneCount(segmentedLines, sentences, targetSceneCount);
         }
     } else if (segmentationMode === 'punctuation') {
         segmentedLines = sentences.map(s => s.text);
@@ -818,32 +823,6 @@ ${promptGenerationInstruction}`;
     );
 
     // Forward yield từ tất cả generators song song (mỗi generator handle 1 batch)
-    async function* raceGenerators() {
-        const pending = new Set<Promise<IteratorResult<{ index: number, scene: any }>>>();
-        for (const g of generators) {
-            pending.add(g.next());
-        }
-        while (pending.size > 0) {
-            const winner = await Promise.race(pending);
-            pending.delete(winner as any);
-            if (winner.done) continue;
-            const { index, scene } = winner.value;
-            // Tìm batchIdx dựa trên global index
-            const batchIdx = Math.floor(index / BATCH_SIZE);
-            // Lưu ý: Biến `globalIdx` ở đây phải derive từ generator order, không từ local index
-            // Để đơn giản, generator yield kèm absolute index qua callback
-            pending.add((async () => {
-                // Continue consuming this generator - track its index
-                const gen = generators[batchIdx];
-                if (!gen) return { value: undefined, done: true } as IteratorResult<any>;
-                return gen.next();
-            })() as any);
-            yield scene;
-        }
-    }
-
-    // BỎ approach phức tạp ở trên - dùng cách đơn giản hơn: workers = async iterators
-    // Mỗi worker consume 1 generator cho đến hết, rồi yield các event progress
     type ProgressEvent = { type: 'progress', scenes: any[], progress: number, status: string };
 
     async function* consumeGenerator(batchIdx: number): AsyncGenerator<ProgressEvent> {
@@ -897,6 +876,34 @@ ${promptGenerationInstruction}`;
 
     for await (const evt of mergeGenerators()) {
         yield evt;
+    }
+
+    // Fix #3: Nếu stream bị ngắt giữa chừng, fill missing scenes bằng placeholder
+    const filledCount = finalScenes.filter(Boolean).length;
+    if (filledCount < segmentedLines.length) {
+        const missingCount = segmentedLines.length - filledCount;
+        console.warn(`Stream chỉ nhận ${filledCount}/${segmentedLines.length} scenes, đang fill ${missingCount} placeholder...`);
+        const missingIndices: number[] = [];
+        for (let i = 0; i < segmentedLines.length; i++) {
+            if (!finalScenes[i]) missingIndices.push(i);
+        }
+
+        // Water-fill missing positions
+        const remainingSentences = missingIndices.map((idx, k) => ({
+            idx: k,
+            text: segmentedLines[idx],
+            wordCount: segmentedLines[idx].split(/\s+/).filter(w => w.length > 0).length
+        }));
+        const fills = segmentByWaterFilling(remainingSentences, Math.min(missingCount, remainingSentences.length));
+
+        for (let k = 0; k < missingIndices.length; k++) {
+            const sceneText = fills[k] || segmentedLines[missingIndices[k]];
+            finalScenes[missingIndices[k]] = {
+                scriptLine: sceneText,
+                imagePrompt: styleLock ? `${styleLock}, (placeholder - AI stream bị ngắt)` : "(placeholder - AI stream bị ngắt)",
+                videoPrompt: styleLock ? `${styleLock}, (placeholder - AI stream bị ngắt)` : "(placeholder - AI stream bị ngắt)"
+            };
+        }
     }
 
     // Yield final

@@ -104,3 +104,69 @@ export const segmentByIndex = (sentences: Sentence[], aiIndices: { fromSentenceI
     }
     return scenes;
 };
+
+/**
+ * Đảm bảo segmentedLines có đúng targetSceneCount scenes.
+ * Nếu thiếu nhiều (ratio < 0.8) → re-segment toàn bộ bằng water-filling.
+ * Nếu thiếu ít (ratio ≥ 0.8) → tách scene dài nhất làm đôi (tại dấu câu gần nhất).
+ * Trả về mảng mới (không mutate input).
+ */
+export const ensureSceneCount = (
+    segmentedLines: string[],
+    sentences: Sentence[],
+    targetSceneCount: number
+): string[] => {
+    if (segmentedLines.length >= targetSceneCount) return segmentedLines;
+
+    const ratio = segmentedLines.length / targetSceneCount;
+    console.warn(`AI trả thiếu cảnh (${segmentedLines.length}/${targetSceneCount}, ratio=${ratio.toFixed(2)}), đang tự bù...`);
+
+    // Case 1: Thiếu nhiều (≥ 20%) → re-segment toàn bộ
+    if (ratio < 0.8) {
+        const resegmented = segmentByWaterFilling(sentences, targetSceneCount);
+        console.warn(`Re-segmented toàn bộ → ${resegmented.length} scenes`);
+        return resegmented;
+    }
+
+    // Case 2: Thiếu ít (< 20%) → tách scene dài nhất làm đôi, lặp đến khi đủ
+    const result = [...segmentedLines];
+    let safetyLimit = targetSceneCount * 2;
+    while (result.length < targetSceneCount && safetyLimit-- > 0) {
+        // Tìm scene dài nhất (theo số từ)
+        let maxIdx = 0;
+        let maxWords = 0;
+        result.forEach((line, i) => {
+            const words = line.split(/\s+/).filter(w => w.length > 0).length;
+            if (words > maxWords) { maxWords = words; maxIdx = i; }
+        });
+
+        if (maxWords < 2) break; // Không thể tách nữa
+
+        const longest = result[maxIdx];
+        const half = Math.floor(longest.length / 2);
+
+        // Tìm vị trí tách tại dấu câu gần nhất (., !, ?)
+        let splitAt = -1;
+        for (const sep of ['. ', '! ', '? ', '.\n', '!\n', '?\n']) {
+            const idx = longest.lastIndexOf(sep, half);
+            if (idx > splitAt) splitAt = idx;
+        }
+        if (splitAt < 0) splitAt = half; // Không có dấu câu → tách giữa
+
+        const part1 = longest.slice(0, splitAt + 1).trim();
+        const part2 = longest.slice(splitAt + 1).trim();
+
+        if (!part1 || !part2) break;
+
+        result.splice(maxIdx, 1, part1, part2);
+    }
+
+    // Nếu vẫn thiếu sau khi tách (edge case) → fallback cuối cùng
+    if (result.length < targetSceneCount) {
+        console.warn(`Tách scene dài nhất không đủ, fallback cuối: water-filling toàn bộ`);
+        return segmentByWaterFilling(sentences, targetSceneCount);
+    }
+
+    console.warn(`Đã bù từ ${segmentedLines.length} → ${result.length} scenes bằng cách tách scene dài`);
+    return result;
+};

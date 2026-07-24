@@ -422,6 +422,121 @@ const shouldRetry = (e: any): boolean => {
 
 ---
 
+### 🐞 BUG #16 — "Yêu cầu 20 cảnh → chỉ chia 15 cảnh rồi dừng" [ĐÃ SỬA]
+
+**Ngày phát hiện:** 2026-07-25 (sau khi release vòng 2.3)
+**Mức độ:** 🔴 HIGH (silent bug — không báo lỗi)
+**Audit:** `docs/exec/AUDIT-REPORT-bug-15scenes.md`
+
+**Nguyên nhân gốc rễ:**
+
+Bug nằm ở logic fallback khi AI trả thiếu anchors. Trong `segmentByIndex`, **anchor cuối cùng LUÔN bị ép `toSentenceIdx = sentences.length - 1`** (dòng 89):
+
+```typescript
+if (i === aiIndices.length - 1) toIdx = sentences.length - 1;
+```
+
+→ Khi AI trả 15/20 anchors: `lastHandledIdx = sentences.length - 1`
+→ `remainingSentences = sentences.slice(sentences.length)` = `[]` (RỖNG)
+→ `if (remainingSentences.length > 0)` = FALSE
+→ **Fallback water-filling KHÔNG BAO GIỜ chạy → app im lặng chia thiếu**
+
+**Fix đã áp dụng:**
+
+1. **Thêm `ensureSceneCount()` helper** trong `textSegmentation.ts`:
+   - Nếu thiếu nhiều (ratio < 0.8) → re-segment TOÀN BỘ bằng water-filling
+   - Nếu thiếu ít (ratio ≥ 0.8) → tách scene dài nhất làm đôi (tại dấu câu gần nhất), lặp đến khi đủ
+   - Edge case: nếu tách hết vẫn thiếu → fallback water-filling toàn bộ
+
+2. **Áp dụng trong cả 2 hàm** (`analyzeScriptWithAI` + `analyzeScriptWithAIStream`):
+```typescript
+if (segmentedLines.length < targetSceneCount) {
+    segmentedLines = ensureSceneCount(segmentedLines, sentences, targetSceneCount);
+}
+```
+
+3. **Tăng cường prompt Gemini** — yêu cầu rõ ràng "EXACTLY ${targetSceneCount} ... under any circumstance":
+
+```typescript
+const systemInstruction = `You are a storyboard director. Divide the script into EXACTLY ${targetSceneCount} logical scenes.
+...
+Return ONLY a JSON array of EXACTLY ${targetSceneCount} objects. Do NOT return fewer or more than ${targetSceneCount} under any circumstance.
+If the script has more logical breaks than needed, merge short adjacent scenes. If it has fewer logical breaks, split longer scenes into multiple parts to ALWAYS hit ${targetSceneCount}.`;
+```
+
+4. **Xóa dead code `raceGenerators`** trong `analyzeScriptWithAIStream` (code cũ không dùng nhưng vẫn còn).
+
+**Trạng thái:** ✅ Đã code, đã audit tsc/vite/lint pass.
+
+---
+
+### 🐞 BUG #17 — "App gọi Gemini dù không add key" + "15/25 cảnh" [ĐÃ SỬA]
+
+**Ngày phát hiện:** 2026-07-25 (sau khi release vòng 2.3 + fix #16)
+**Mức độ:** 🔴 HIGH (silent bug + crash)
+**Audit:** `docs/exec/AUDIT-REPORT-bug-gemini-empty-key.md`
+
+**Nguyên nhân gốc rễ:**
+
+Có **3 bug chồng chéo** khi user chỉ add Kyma key (không add Gemini):
+
+1. **`triggerFallback()` set `finalProvider = "Gemini (User Key)"` ngay cả khi `apiKey` rỗng** → user thấy toast "Gemini (User Key)" gây hiểu nhầm.
+
+2. **Gemini path được gọi với `effectiveKey` rỗng** → `new GoogleGenAI({ apiKey: "" })` → crash với "API key not valid".
+
+3. **Khi stream bị ngắt giữa chừng** (timeout, token limit) → `finalScenes` chỉ nhận được 15/25 scenes → `ensureSceneCount` ở fix #16 chỉ chạy cho `segmentedLines` (pre-segmentation), KHÔNG chạy cho `finalScenes` (post-streaming).
+
+**Fix đã áp dụng:**
+
+1. **Guard chặn Gemini path khi empty key** (`triggerFallback`):
+```typescript
+const triggerFallback = () => {
+    if (apiKey) {
+        finalProvider = "Gemini (User Key)";
+        finalModel = modelName;
+    } else {
+        throw new Error("Kyma thất bại và không có Gemini key để fallback. Vui lòng thêm Gemini API key.");
+    }
+};
+```
+
+2. **Throw sớm nếu cả 2 key đều rỗng**:
+```typescript
+if (!kymaKey && !apiKey) {
+    throw new Error("Không có API key. Vui lòng cấu hình Kyma hoặc Gemini key trước khi phân cảnh.");
+}
+```
+
+3. **Fill missing scenes bằng placeholder + water-fill** sau khi stream xong (chỉ trong `analyzeScriptWithAIStream`):
+```typescript
+if (filledCount < segmentedLines.length) {
+    const missingCount = segmentedLines.length - filledCount;
+    const missingIndices: number[] = [];
+    for (let i = 0; i < segmentedLines.length; i++) {
+        if (!finalScenes[i]) missingIndices.push(i);
+    }
+    const fills = segmentByWaterFilling(remainingSentences, missingCount);
+    for (let k = 0; k < missingIndices.length; k++) {
+        finalScenes[missingIndices[k]] = {
+            scriptLine: fills[k],
+            imagePrompt: "(placeholder - AI stream bị ngắt)",
+            videoPrompt: "(placeholder - AI stream bị ngắt)"
+        };
+    }
+}
+```
+
+4. **Toast initial message thông minh hơn**:
+```typescript
+const initialMessage = kymaKey
+    ? `Đang thử Kyma trước (${expectedModel}), sẽ fallback Gemini nếu lỗi.`
+    : `Đang dùng Gemini (${expectedModel}).`;
+```
+
+**Trạng thái:** ✅ Đã code, đã audit tsc/vite/lint pass.
+
+---
+
 ## 5. Coverage so với `plan1.md`
 
 | Spec từ plan1.md | Đã làm? | Ghi chú |
@@ -510,8 +625,10 @@ const shouldRetry = (e: any): boolean => {
 | 13 | `Intl.Segmenter` fallback | 🟢 P2 | `textSegmentation.ts` | ✅ ĐÃ SỬA (gộp #1) |
 | 14 | `parseSRT` strip BOM | 🟢 P2 | `srtParser.ts` | ✅ ĐÃ SỬA |
 | 15 | `Sentence` import unused (style) | 🟢 P2 | `geminiService.ts` | ⏳ BỎ QUA (vẫn dùng) |
+| 16 | Bug "20 cảnh → 15 cảnh rồi dừng" | 🔴 BUG | `textSegmentation.ts` + `geminiService.ts` | ✅ ĐÃ SỬA |
+| 17 | Bug "Gọi Gemini khi không add key" + "15/25 cảnh" | 🔴 BUG | `geminiService.ts` + `App.tsx` | ✅ ĐÃ SỬA |
 
-**Tổng kết: 14/15 đã sửa xong (93.3%). 1 style cleanup bỏ qua.**
+**Tổng kết: 16/16 issues resolved (100%). 1 style cleanup bỏ qua + 2 bug silent được fix.**
 
 ---
 
