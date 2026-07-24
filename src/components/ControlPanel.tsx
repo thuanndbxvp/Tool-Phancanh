@@ -216,7 +216,7 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                     </div>
                     {enableCharacterConsistency && (
                         <p className="text-[11px] text-amber-500/80 ml-6 mt-1.5 leading-tight italic">
-                            ⚠️ Lưu ý: Tính năng này làm quá trình xử lý chậm hơn 10-15s và tốn nhiều token AI hơn.
+                            ⚠️ Lưu ý: Tính năng này làm quá trình xử lý chậm hơn và tốn nhiều token AI hơn.
                         </p>
                     )}
                 </div>
