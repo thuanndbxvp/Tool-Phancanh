@@ -19,6 +19,8 @@ const App: FC = () => {
   const [customStylePrompt, setCustomStylePrompt] = useState<string>('');
   const [prompts, setPrompts] = useState<ScenePrompt[]>([]);
   const [isBuilding, setIsBuilding] = useState<boolean>(false);
+  const [buildProgress, setBuildProgress] = useState<number>(0);
+  const [buildStatus, setBuildStatus] = useState<string>('');
   const [segmentationMode, setSegmentationMode] = useState<'ai' | 'punctuation' | 'fixed'>('fixed');
   const [targetSceneCount, setTargetSceneCount] = useState<number>(10);
   const [promptType, setPromptType] = useState<PromptType>('image');
@@ -160,6 +162,9 @@ const App: FC = () => {
           return;
       }
       setIsBuilding(true);
+      setBuildProgress(0);
+      setBuildStatus('Đang khởi tạo...');
+      setPrompts([]); // Clear old prompts for progressive view
       try {
            const activeKeys = apiKeys.filter(k => k.isActive);
            let effectiveKey = "";
@@ -200,11 +205,23 @@ const App: FC = () => {
               aspectRatio,
               enableAspectRatio,
               kymaKey,
-              selectedKymaModel || 'gpt-4o-mini'
+              selectedKymaModel || 'gpt-4o-mini',
+              (newScenes, progress, status) => {
+                  setBuildProgress(progress);
+                  setBuildStatus(status);
+                  const incrementalPrompts = newScenes.map((item: any, index: number) => ({
+                      id: `scene-${index}`,
+                      phase: item.phase,
+                      imagePrompt: item.imagePrompt,
+                      videoPrompt: item.videoPrompt,
+                      scriptLine: item.scriptLine
+                  }));
+                  setPrompts(incrementalPrompts);
+              }
           );
           
           const newPrompts = results.scenes.map((item: any, index: number) => ({
-              id: Date.now() + index,
+              id: `scene-${index}`,
               phase: item.phase,
               imagePrompt: item.imagePrompt,
               videoPrompt: item.videoPrompt,
@@ -322,6 +339,8 @@ const App: FC = () => {
                         onScriptUpload={handleScriptUpload}
                         onBuildPrompts={handleBuildPrompts}
                         isBuilding={isBuilding}
+                        buildProgress={buildProgress}
+                        buildStatus={buildStatus}
                         scriptFileName={scriptFileName}
                         segmentationMode={segmentationMode}
                         setSegmentationMode={setSegmentationMode}

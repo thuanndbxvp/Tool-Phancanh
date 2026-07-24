@@ -13,6 +13,8 @@ interface ControlPanelProps {
   onScriptUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onBuildPrompts: () => void;
   isBuilding: boolean;
+  buildProgress: number;
+  buildStatus: string;
   scriptFileName: string | null;
   segmentationMode: 'ai' | 'punctuation' | 'fixed';
   setSegmentationMode: (mode: 'ai' | 'punctuation' | 'fixed') => void;
@@ -32,7 +34,7 @@ interface ControlPanelProps {
 
 export const ControlPanel: FC<ControlPanelProps> = ({ 
     mode, setMode, scenario, setScenario, customStylePrompt, setCustomStylePrompt,
-    onScriptUpload, onBuildPrompts, isBuilding, 
+    onScriptUpload, onBuildPrompts, isBuilding, buildProgress, buildStatus,
     scriptFileName, 
     segmentationMode, setSegmentationMode, hasPrompts,
     targetSceneCount, setTargetSceneCount,
@@ -200,23 +202,30 @@ export const ControlPanel: FC<ControlPanelProps> = ({
             {/* Segmentation Options & Generate Button Group */}
             <div>
                 <label className="block text-sm font-medium text-slate-300 mb-2">✂️ Phương pháp phân cảnh (Pre-segmentation)</label>
-                <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="grid grid-cols-3 gap-2 mb-4">
                     <button
-                        onClick={() => setSegmentationMode('punctuation')}
-                        className={`p-3 rounded-xl text-xs font-bold transition-all border shadow-lg flex flex-col items-center gap-1 ${segmentationMode === 'punctuation' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-500'}`}
+                        onClick={() => setSegmentationMode('ai')}
+                        className={`p-2 rounded-xl text-xs font-bold transition-all border shadow-lg flex flex-col items-center gap-1 text-center ${segmentationMode === 'ai' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-500'}`}
                     >
-                        <span>📝 Dấu chấm câu</span>
-                        <span className="font-medium opacity-70 text-[10px]">Theo câu hoàn chỉnh</span>
+                        <span>🤖 AI</span>
+                        <span className="font-medium opacity-70 text-[9px] leading-tight">Ngữ nghĩa</span>
                     </button>
                     <button
                         onClick={() => setSegmentationMode('fixed')}
-                        className={`p-3 rounded-xl text-xs font-bold transition-all border shadow-lg flex flex-col items-center gap-1 ${segmentationMode === 'fixed' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-500'}`}
+                        className={`p-2 rounded-xl text-xs font-bold transition-all border shadow-lg flex flex-col items-center gap-1 text-center ${segmentationMode === 'fixed' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-500'}`}
                     >
-                        <span>🔢 Số cảnh cố định</span>
-                        <span className="font-medium opacity-70 text-[10px]">Chia đều bằng JS</span>
+                        <span>🔢 Chia đều</span>
+                        <span className="font-medium opacity-70 text-[9px] leading-tight">Bằng nhau</span>
+                    </button>
+                    <button
+                        onClick={() => setSegmentationMode('punctuation')}
+                        className={`p-2 rounded-xl text-xs font-bold transition-all border shadow-lg flex flex-col items-center gap-1 text-center ${segmentationMode === 'punctuation' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-500'}`}
+                    >
+                        <span>📝 Dấu câu</span>
+                        <span className="font-medium opacity-70 text-[9px] leading-tight">Logic câu</span>
                     </button>
 
-                     <div className={`col-span-2 p-2 rounded-xl border flex flex-col justify-center items-center transition-all duration-300 ${segmentationMode === 'fixed' ? 'bg-slate-900 border-emerald-500/50 opacity-100' : 'bg-slate-900/50 border-slate-800 opacity-40 pointer-events-none'}`}>
+                     <div className={`col-span-3 p-2 rounded-xl border flex flex-col justify-center items-center transition-all duration-300 ${(segmentationMode === 'fixed' || segmentationMode === 'ai') ? 'bg-slate-900 border-emerald-500/50 opacity-100' : 'bg-slate-900/50 border-slate-800 opacity-40 pointer-events-none'}`}>
                         <label className="text-[10px] font-bold text-slate-400 mb-1 uppercase text-center">Số lượng cảnh</label>
                         <input 
                             type="number" 
@@ -225,7 +234,7 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                             value={targetSceneCount}
                             onChange={(e) => setTargetSceneCount(Math.max(1, parseInt(e.target.value) || 10))}
                             className="w-full bg-slate-800 border border-slate-700 p-1.5 rounded text-center text-white text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
-                            disabled={segmentationMode !== 'fixed'}
+                            disabled={segmentationMode !== 'fixed' && segmentationMode !== 'ai'}
                         />
                     </div>
                 </div>
@@ -233,11 +242,24 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                 <button
                     onClick={onBuildPrompts}
                     disabled={!canBuild || isBuilding}
-                    className={`w-full py-3 px-4 rounded-md font-semibold transition-all flex items-center justify-center text-white ${hasPrompts ? 'bg-amber-600 hover:bg-amber-500' : 'bg-blue-600 hover:bg-blue-500'} disabled:bg-slate-600 disabled:text-slate-400 disabled:cursor-not-allowed shadow-lg`}
+                    className={`relative w-full overflow-hidden py-3 px-4 rounded-md font-semibold transition-all flex items-center justify-center text-white ${hasPrompts ? 'bg-amber-600 hover:bg-amber-500' : 'bg-blue-600 hover:bg-blue-500'} disabled:bg-slate-700 disabled:text-slate-300 disabled:cursor-not-allowed shadow-lg`}
                 >
-                    {isBuilding ? <SpinnerIcon className="animate-spin h-5 w-5 mr-2" /> : hasPrompts ? <ArrowPathIcon className="h-5 w-5 mr-2" /> : null}
-                    {isBuilding ? 'AI đang phân tích...' : hasPrompts ? 'Tạo lại Storyboard Pro' : 'Tạo Storyboard Pro'}
+                    {isBuilding && (
+                        <div 
+                            className="absolute left-0 top-0 bottom-0 bg-emerald-600/40 transition-all duration-300 ease-out" 
+                            style={{ width: `${buildProgress}%` }}
+                        />
+                    )}
+                    <div className="relative z-10 flex items-center gap-2">
+                        {isBuilding ? <SpinnerIcon className="animate-spin h-5 w-5" /> : hasPrompts ? <ArrowPathIcon className="h-5 w-5" /> : null}
+                        {isBuilding ? (buildStatus || 'AI đang phân tích...') : hasPrompts ? 'Tạo lại Storyboard Pro' : 'Tạo Storyboard Pro'}
+                    </div>
                 </button>
+                {isBuilding && buildProgress > 0 && (
+                    <div className="mt-2 text-center text-xs text-emerald-400 font-medium animate-pulse">
+                        Đang tiến hành... {buildProgress}%
+                    </div>
+                )}
             </div>
           </div>
       </div>

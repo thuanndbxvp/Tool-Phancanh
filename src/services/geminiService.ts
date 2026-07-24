@@ -260,12 +260,15 @@ export const analyzeScriptWithAI = async (
     aspectRatio: string = '16:9',
     enableAspectRatio: boolean = false,
     kymaKey?: string,
-    kymaModelName: string = "gpt-4o-mini"
+    kymaModelName: string = "gpt-4o-mini",
+    onProgress?: (scenes: any[], progress: number, statusText: string) => void
 ): Promise<{ scenes: any[], provider: string, model: string }> => {
     
     // 1. PRE-SEGMENTATION IN JS (Fixes Bug 1 & Bug 2)
+    if (onProgress) onProgress([], 5, "Đang tiền xử lý kịch bản...");
     let segmentedLines: string[] = [];
     if (segmentationMode === 'ai') {
+        if (onProgress) onProgress([], 10, "Đang dùng AI phân tích điểm neo (Phase 1)...");
         const anchors = await fetchSceneAnchors(script, targetSceneCount, modelName, apiKey, kymaKey, kymaModelName);
         segmentedLines = segmentByAnchors(script, anchors);
     } else {
@@ -278,8 +281,8 @@ export const analyzeScriptWithAI = async (
 
     // 2. CONSTRUCT PROMPT INSTRUCTIONS
     let promptGenerationInstruction = "";
-    const commonStyleInjection = `   - **STYLE INJECTION**: Analyze the attached Reference Images (if any). Extract their art style (e.g., color palette, lighting key, texture, rendering style) and WRITE IT EXPLICITLY into the prompt description.
-    - **MANDATORY PREFIX**: Start exactly with: "${styleLock}"`;
+    // Note: Style injection is now mainly handled by Javascript concatenation.
+    const commonStyleInjection = `   - **STYLE INJECTION**: Analyze the attached Reference Images (if any). Extract their art style (e.g., color palette, lighting key, texture, rendering style) and apply it to the scene description.`;
 
     if (promptType === 'image') {
         const aspectRatioInstruction = enableAspectRatio ? `\n   - **ASPECT RATIO**: Output MUST include the aspect ratio parameter "--ar ${aspectRatio}" at the very end of the prompt.` : "";
@@ -328,12 +331,27 @@ ${commonStyleInjection}${aspectRatioInstruction}
         // We will map strictly by aligning array indexes if sizes mismatch, but ideally they match.
         for (let j = 0; j < batch.length; j++) {
             const aiResult = batchResults[j] || {};
+            
+            // Forcefully prepend the style using JS
+            const rawImagePrompt = aiResult.imagePrompt || "";
+            const rawVideoPrompt = aiResult.videoPrompt || "";
+            
+            const finalImagePrompt = (styleLock && rawImagePrompt) ? `${styleLock}, ${rawImagePrompt}` : rawImagePrompt;
+            const finalVideoPrompt = (styleLock && rawVideoPrompt) ? `${styleLock}, ${rawVideoPrompt}` : rawVideoPrompt;
+
             finalScenes.push({
                 scriptLine: batch[j], // guarantee original script text
                 phase: aiResult.phase || "Action",
-                imagePrompt: aiResult.imagePrompt,
-                videoPrompt: aiResult.videoPrompt
+                imagePrompt: finalImagePrompt,
+                videoPrompt: finalVideoPrompt
             });
+        }
+        
+        if (onProgress) {
+            // progress ranges from 10% (after Phase 1) to 100%
+            const startProgress = segmentationMode === 'ai' ? 10 : 5;
+            const batchProgress = Math.floor(((finalScenes.length / segmentedLines.length) * (100 - startProgress)) + startProgress);
+            onProgress([...finalScenes], batchProgress, `Đang sinh prompt (${finalScenes.length}/${segmentedLines.length} cảnh)...`);
         }
     }
 
