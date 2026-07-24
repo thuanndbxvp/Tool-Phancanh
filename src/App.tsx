@@ -9,7 +9,7 @@ import { ApiSettingsModal } from './components/modals/ApiSettingsModal';
 import { LibraryModal } from './components/modals/LibraryModal';
 import { GuideModal } from './components/modals/GuideModal';
 import { BookOpenIcon, LibraryIcon, KeyIcon, SparklesIcon, TextDocumentIcon, DownloadIcon } from './components/icons';
-import { analyzeScriptWithAI } from './services/geminiService';
+import { analyzeScriptWithAIStream } from './services/geminiService';
 
 const App: FC = () => {
   // State
@@ -169,10 +169,10 @@ const App: FC = () => {
       try {
            const activeKeys = apiKeys.filter(k => k.isActive);
            let effectiveKey = "";
-           
+
            if (activeKeys.length > 0) {
-               const randomIndex = Math.floor(Math.random() * activeKeys.length);
-               effectiveKey = activeKeys[randomIndex].key;
+               // Truyền CSV keys để withRetry tự xoay vòng khi gặp 429
+               effectiveKey = activeKeys.map(k => k.key).join(',');
            }
            
            if (!effectiveKey && !kymaKey) {
@@ -199,11 +199,11 @@ const App: FC = () => {
           const expectedModel = kymaKey ? selectedKymaModel || 'deepseek-v4-flash' : selectedModel;
           addToast('info', 'Đang phân cảnh...', `Sử dụng ${expectedProvider} (${expectedModel})`);
 
-          const results = await analyzeScriptWithAI(
+          const stream = analyzeScriptWithAIStream(
               scenario,
               refImagesForService,
               effectiveKey,
-              activeStylePrompt, 
+              activeStylePrompt,
               mode,
               segmentationMode,
               selectedModel,
@@ -213,34 +213,47 @@ const App: FC = () => {
               enableAspectRatio,
               enableCharacterConsistency,
               kymaKey,
-              selectedKymaModel || 'deepseek-v4-flash',
-              (newScenes, progress, status) => {
-                  setBuildProgress(progress);
-                  setBuildStatus(status);
-                  const incrementalPrompts = newScenes.map((item: any, index: number) => ({
+              selectedKymaModel || 'deepseek-v4-flash'
+          );
+
+          let finalResults: { scenes: any[], provider: string, model: string, totalCount: number } | null = null;
+          for await (const evt of stream) {
+              if (evt.type === 'progress' && evt.scenes) {
+                  setBuildProgress(evt.progress!);
+                  setBuildStatus(evt.status!);
+                  const incrementalPrompts = evt.scenes.map((item: any, index: number) => ({
                       id: `scene-${index}`,
                       imagePrompt: item.imagePrompt,
                       videoPrompt: item.videoPrompt,
                       scriptLine: item.scriptLine
                   }));
                   setPrompts(incrementalPrompts);
+              } else if (evt.type === 'final' && evt.scenes) {
+                  finalResults = {
+                      scenes: evt.scenes,
+                      provider: evt.provider!,
+                      model: evt.model!,
+                      totalCount: evt.totalCount!,
+                  };
               }
-          );
-          
-          const newPrompts = results.scenes.map((item: any, index: number) => ({
+          }
+
+          if (!finalResults) throw new Error("Streaming bị ngắt không rõ lý do.");
+
+          const newPrompts = finalResults.scenes.map((item: any, index: number) => ({
               id: `scene-${index}`,
               imagePrompt: item.imagePrompt,
               videoPrompt: item.videoPrompt,
               scriptLine: item.scriptLine
           }));
-          
+
           setPrompts(newPrompts);
           saveSession(newPrompts, scriptFileName || "Manual Scenario");
-          
-          if (results.provider !== expectedProvider || results.model !== expectedModel) {
-              addToast('info', 'Tự động chuyển đổi', `Dùng ${results.provider} (${results.model}) do cấu hình ban đầu gặp lỗi.`);
+
+          if (finalResults.provider !== expectedProvider || finalResults.model !== expectedModel) {
+              addToast('info', 'Tự động chuyển đổi', `Dùng ${finalResults.provider} (${finalResults.model}) do cấu hình ban đầu gặp lỗi.`);
           }
-          addToast('success', 'Thành công', `Đã tạo ${newPrompts.length} cảnh bằng ${results.provider} (${results.model}).`);
+          addToast('success', 'Thành công', `Đã tạo ${newPrompts.length}/${finalResults.totalCount} cảnh bằng ${finalResults.provider} (${finalResults.model}).`);
           
       } catch (error: any) {
           addToast('error', 'Lỗi tạo nội dung', error.message);

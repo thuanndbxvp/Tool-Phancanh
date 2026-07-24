@@ -20,12 +20,41 @@ export const validateApiKey = async (apiKey: string, modelName: string = 'gemini
 
 const BATCH_SIZE = 5;
 
-const withRetry = async <T>(fn: () => Promise<T>, retries: number = 2, delayMs: number = 2000): Promise<T> => {
+// Hàm cứu hộ: Mổ xẻ lấy các Object còn nguyên vẹn trong JSON hỏng (hỗ trợ 1 cấp nested)
+const bestEffortParse = (text: string): any[] => {
+    const objects = text.match(/\{(?:[^{}]|\{[^{}]*\})*\}/g) || [];
+    return objects.map(o => {
+        try { return JSON.parse(o); } catch { return null; }
+    }).filter(Boolean);
+};
+
+// Hàm phân loại lỗi: Không phải lỗi nào cũng nên thử lại
+const shouldRetry = (e: any): boolean => {
+    const msg = String(e?.message || e || '');
+    if (msg.includes('JSON')) return false;  // Lỗi đứt JSON thì Retry vô ích, phải parse best-effort
+    if (msg.includes('400')) return false;   // Bad request thì bỏ qua
+    return true; // 429, 500, timeout... thì retry
+};
+
+// Nâng cấp withRetry: nhận danh sách keys (CSV) để xoay vòng khi gặp 429
+const withRetry = async <T>(fn: (key: string) => Promise<T>, keys: string, retries: number = 2, delayMs: number = 2000): Promise<T> => {
+    const keyList = keys.split(',').map(k => k.trim()).filter(Boolean);
+    let currentKeyIndex = 0;
+
     for (let r = 0; r <= retries; r++) {
         try {
-            return await fn();
+            return await fn(keyList[currentKeyIndex]);
         } catch (e) {
-            if (r === retries) throw e;
+            if (r === retries || !shouldRetry(e)) {
+                throw e;
+            }
+            // Nếu 429 (Quá tải), tự động đảo sang Key tiếp theo trong mảng
+            const msg = String((e as Error)?.message || '');
+            if (msg.includes('429') && keyList.length > 1) {
+                currentKeyIndex = (currentKeyIndex + 1) % keyList.length;
+                console.warn(`Hit 429! Rotating to key index ${currentKeyIndex}...`);
+            }
+
             await new Promise(res => setTimeout(res, delayMs * (r + 1)));
             console.warn(`Retry ${r+1}/${retries} after error:`, e);
         }
@@ -35,13 +64,14 @@ const withRetry = async <T>(fn: () => Promise<T>, retries: number = 2, delayMs: 
 
 // Batched AI generation to avoid token limits and skipped text
 const generateBatch = async (
-    scenesBatch: string[], 
+    scenesBatch: string[],
     systemInstruction: string,
     promptGenerationInstruction: string,
-    modelName: string, 
+    modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "deepseek-v4-flash"
+    kymaModelName: string = "deepseek-v4-flash",
+    onFallback?: () => void
 ): Promise<any[]> => {
     const batchSystemInstruction = `You are a professional storyboard artist and script analyst. 
 Your task is to generate visual prompts for a list of PRE-SEGMENTED script lines.
@@ -108,7 +138,7 @@ OUTPUT ONLY A JSON ARRAY.`;
                     { role: 'user', content: `Generate prompts for these lines:\n${batchInput}` }
                 ],
                 temperature: 0.7,
-                max_tokens: 8000
+                max_tokens: kymaModelName.includes('flash') ? 10000 : 8000 // Token cao cho Batch
             })
         });
         if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
@@ -120,20 +150,28 @@ OUTPUT ONLY A JSON ARRAY.`;
         } else {
             text = text.replace(/```json/g, '').replace(/```/g, '').trim();
         }
-        return JSON.parse(text);
+        try {
+            return JSON.parse(text);
+        } catch (parseError) {
+            console.warn("JSON parse failed for batch, attempting best-effort salvage...");
+            const salvaged = bestEffortParse(text);
+            if (salvaged.length > 0) return salvaged;
+            throw parseError; // Vô phương cứu chữa
+        }
     };
 
     if (kymaKey) {
         try {
-            return await withRetry(() => attemptKyma(kymaKey));
+            return await withRetry((k) => attemptKyma(k), kymaKey);
         } catch (e) {
             console.warn("Kyma failed for batch, falling back...", e);
+            if (onFallback) onFallback();
         }
     }
 
     if (keyToUse) {
         try {
-            return await withRetry(() => attemptGemini(keyToUse));
+            return await withRetry((k) => attemptGemini(k), keyToUse);
         } catch (e) {
             console.warn("User key failed for batch, falling back...", e);
         }
@@ -144,13 +182,121 @@ OUTPUT ONLY A JSON ARRAY.`;
     throw new Error("Tất cả API đều lỗi khi xử lý batch.");
 };
 
+// Streaming variant: yield từng scene ngay khi Gemini parse xong (Kyma fallback non-streaming)
+const generateBatchStream = async function* (
+    scenesBatch: string[],
+    systemInstruction: string,
+    promptGenerationInstruction: string,
+    modelName: string,
+    keyToUse: string,
+    kymaKey?: string,
+    kymaModelName: string = "deepseek-v4-flash",
+    onFallback?: () => void
+): AsyncGenerator<{ index: number, scene: any }> {
+    // Kyma path: wrapper non-streaming rồi yield từng cái (Kyma API không support stream)
+    if (kymaKey) {
+        try {
+            const response = await fetch('https://kymaapi.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${kymaKey.split(',')[0].trim()}`
+                },
+                body: JSON.stringify({
+                    model: kymaModelName,
+                    messages: [
+                        { role: 'system', content: systemInstruction },
+                        { role: 'user', content: `Generate prompts for these lines:\n${JSON.stringify(scenesBatch, null, 2)}` }
+                    ],
+                    temperature: 0.7,
+                    max_tokens: kymaModelName.includes('flash') ? 10000 : 8000
+                })
+            });
+            if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
+            const data = await response.json();
+            let text = data.choices[0].message.content;
+            const match = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+            if (match) {
+                text = match[0];
+            } else {
+                text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            }
+            let scenes: any[];
+            try {
+                scenes = JSON.parse(text);
+            } catch {
+                scenes = bestEffortParse(text);
+            }
+            for (let i = 0; i < scenes.length; i++) {
+                yield { index: i, scene: scenes[i] };
+            }
+            return;
+        } catch (e) {
+            console.warn("Kyma failed for stream batch, falling back to Gemini stream...", e);
+            if (onFallback) onFallback();
+        }
+    }
+
+    // Gemini streaming path
+    const schemaProperties: any = {
+        scriptLine: { type: Type.STRING }
+    };
+    const requiredFields = ["scriptLine"];
+    if (promptGenerationInstruction.includes("imagePrompt")) {
+        schemaProperties.imagePrompt = { type: Type.STRING };
+        requiredFields.push("imagePrompt");
+    } else {
+        schemaProperties.videoPrompt = { type: Type.STRING };
+        requiredFields.push("videoPrompt");
+    }
+
+    const ai = new GoogleGenAI({ apiKey: keyToUse.split(',')[0].trim() });
+    const stream = await ai.models.generateContentStream({
+        model: modelName,
+        contents: `Generate prompts for these lines:\n${JSON.stringify(scenesBatch, null, 2)}`,
+        config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: Type.ARRAY,
+                items: {
+                    type: Type.OBJECT,
+                    properties: schemaProperties,
+                    required: requiredFields
+                }
+            }
+        }
+    });
+
+    const objectRegex = /\{(?:[^{}]|\{[^{}]*\})*\}/g;
+    let buffer = '';
+    let index = 0;
+    for await (const chunk of stream) {
+        const chunkText = chunk.text || '';
+        buffer += chunkText;
+        const matches = buffer.match(objectRegex);
+        if (matches) {
+            for (const m of matches) {
+                try {
+                    const scene = JSON.parse(m);
+                    yield { index: index++, scene };
+                    buffer = buffer.replace(m, '');
+                } catch {
+                    // Object chưa hoàn chỉnh, đợi chunk tiếp
+                }
+            }
+        }
+    }
+};
+
 const fetchSceneAnchors = async (
     sentences: Sentence[],
     targetSceneCount: number,
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "deepseek-v4-flash"
+    kymaModelName: string = "deepseek-v4-flash",
+    onFallback?: () => void
 ): Promise<{ fromSentenceIdx: number, toSentenceIdx: number }[]> => {
     const scriptText = sentences.map(s => `[${s.idx}] ${s.text}`).join('\n');
 
@@ -206,7 +352,7 @@ Return ONLY a JSON array of exactly ${targetSceneCount} objects:
                     { role: 'user', content: `Script:\n\n${scriptText}` }
                 ],
                 temperature: 0.2,
-                max_tokens: 8000
+                max_tokens: 1500 // Token cho Scene Anchors (output ~200 tokens)
             })
         });
         if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
@@ -222,10 +368,19 @@ Return ONLY a JSON array of exactly ${targetSceneCount} objects:
     };
 
     if (kymaKey) {
-        try { return await withRetry(() => attemptKyma(kymaKey)); } catch (e) { console.warn("Kyma failed for anchors, falling back...", e); }
+        try {
+            return await withRetry((k) => attemptKyma(k), kymaKey);
+        } catch (e) {
+            console.warn("Kyma failed for anchors, falling back...", e);
+            if (onFallback) onFallback();
+        }
     }
     if (keyToUse) {
-        try { return await withRetry(() => attemptGemini(keyToUse)); } catch (e) { console.warn("User key failed for anchors, falling back...", e); }
+        try {
+            return await withRetry((k) => attemptGemini(k), keyToUse);
+        } catch (e) {
+            console.warn("User key failed for anchors, falling back...", e);
+        }
     }
 
 
@@ -238,7 +393,8 @@ const fetchCharacterDictionary = async (
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "deepseek-v4-flash"
+    kymaModelName: string = "deepseek-v4-flash",
+    onFallback?: () => void
 ): Promise<string> => {
     const cached = Cache.getCharacters(script, kymaKey ? kymaModelName : modelName);
     if (cached) return cached;
@@ -277,7 +433,7 @@ Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo wo
                     { role: 'user', content: `Script:\n\n${script}` }
                 ],
                 temperature: 0.3,
-                max_tokens: 8000
+                max_tokens: 2000 // Token cho Character Dictionary (output ~500 tokens)
             })
         });
         if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
@@ -294,10 +450,19 @@ Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo wo
 
     let result: string | null = null;
     if (kymaKey) {
-        try { result = await withRetry(() => attemptKyma(kymaKey)); } catch (e) { console.warn("Kyma failed for characters, falling back...", e); }
+        try {
+            result = await withRetry((k) => attemptKyma(k), kymaKey);
+        } catch (e) {
+            console.warn("Kyma failed for characters, falling back...", e);
+            if (onFallback) onFallback();
+        }
     }
     if (!result && keyToUse) {
-        try { result = await withRetry(() => attemptGemini(keyToUse)); } catch (e) { console.warn("User key failed for characters, falling back...", e); }
+        try {
+            result = await withRetry((k) => attemptGemini(k), keyToUse);
+        } catch (e) {
+            console.warn("User key failed for characters, falling back...", e);
+        }
     }
 
     if (!result) throw new Error("Tất cả API đều lỗi khi phân tích nhân vật.");
@@ -323,8 +488,14 @@ export const analyzeScriptWithAI = async (
     kymaModelName: string = "gpt-4o-mini",
     onProgress?: (scenes: any[], progress: number, statusText: string) => void
 ): Promise<{ scenes: any[], provider: string, model: string }> => {
-    const usedProvider = kymaKey ? "Kyma" : (apiKey ? "Gemini (User Key)" : "System Default");
-    const usedModel = kymaKey ? kymaModelName : modelName;
+    // Theo dõi provider thực sự đã chạy (cho Fix #12)
+    let finalProvider = kymaKey ? "Kyma" : (apiKey ? "Gemini (User Key)" : "System Default");
+    let finalModel = kymaKey ? kymaModelName : modelName;
+
+    const triggerFallback = () => {
+        finalProvider = "Gemini (User Key)";
+        finalModel = modelName;
+    };
 
     // 1. PRE-SEGMENTATION (Tokenize + AI/Water-fill)
     if (onProgress) onProgress([], 5, "Đang tiền xử lý kịch bản...");
@@ -337,16 +508,46 @@ export const analyzeScriptWithAI = async (
 
     if (segmentationMode === 'ai') {
         if (onProgress) onProgress([], 5, "Đang dùng AI phân tích điểm neo...");
-        const anchors = await fetchSceneAnchors(sentences, targetSceneCount, modelName, apiKey, kymaKey, kymaModelName);
+
+        // Fix #4: Chunking cho script > 1000 câu
+        let anchors: { fromSentenceIdx: number; toSentenceIdx: number }[] = [];
+        if (sentences.length > 1000) {
+            const CHUNK_SIZE = 800;
+            const chunks: Sentence[][] = [];
+            for (let i = 0; i < sentences.length; i += CHUNK_SIZE) {
+                chunks.push(sentences.slice(i, i + CHUNK_SIZE));
+            }
+
+            let offset = 0;
+            for (const chunk of chunks) {
+                const chunkTarget = Math.max(1, Math.round((chunk.length / sentences.length) * targetSceneCount));
+                const chunkAnchors = await fetchSceneAnchors(chunk, chunkTarget, modelName, apiKey, kymaKey, kymaModelName, triggerFallback);
+                anchors = anchors.concat(
+                    chunkAnchors.map(a => ({
+                        fromSentenceIdx: a.fromSentenceIdx + offset,
+                        toSentenceIdx: a.toSentenceIdx + offset
+                    }))
+                );
+                offset += chunk.length;
+            }
+        } else {
+            anchors = await fetchSceneAnchors(sentences, targetSceneCount, modelName, apiKey, kymaKey, kymaModelName, triggerFallback);
+        }
+
         segmentedLines = segmentByIndex(sentences, anchors);
 
         // Validation: Nếu AI trả thiếu số lượng, fallback tự băm bằng Water-filling phần còn thiếu.
         if (segmentedLines.length < targetSceneCount) {
             console.warn(`AI trả thiếu cảnh (${segmentedLines.length}/${targetSceneCount}), đang fallback bù bằng water-filling...`);
             const missing = targetSceneCount - segmentedLines.length;
-            const remainingSentences = sentences.slice(Math.floor(sentences.length * 0.8));
-            const fillScenes = segmentByWaterFilling(remainingSentences, missing);
-            segmentedLines = segmentedLines.concat(fillScenes);
+            const lastHandledIdx = anchors.length > 0
+                ? Math.max(...anchors.map(a => a.toSentenceIdx))
+                : -1;
+            const remainingSentences = sentences.slice(lastHandledIdx + 1);
+            if (remainingSentences.length > 0) {
+                const fillScenes = segmentByWaterFilling(remainingSentences, missing);
+                segmentedLines = segmentedLines.concat(fillScenes);
+            }
         }
     } else if (segmentationMode === 'punctuation') {
         segmentedLines = sentences.map(s => s.text);
@@ -357,13 +558,13 @@ export const analyzeScriptWithAI = async (
     if (segmentedLines.length === 0) {
         throw new Error("Kịch bản trống hoặc không thể phân mảnh.");
     }
-    
+
     // 1.5 CHARACTER DICTIONARY FETCH
     let characterDictionaryStr = "";
     if (enableCharacterConsistency) {
         try {
             if (onProgress) onProgress([], 15, "Đang phân tích tạo hình nhân vật (Casting)...");
-            const charDict = await fetchCharacterDictionary(script, modelName, apiKey, kymaKey, kymaModelName);
+            const charDict = await fetchCharacterDictionary(script, modelName, apiKey, kymaKey, kymaModelName, triggerFallback);
             // charDict is a JSON string like {"Hung": "..."}
             const parsedDict = JSON.parse(charDict);
             let dictText = "";
@@ -405,13 +606,13 @@ ${commonStyleInjection}${aspectRatioInstruction}${characterDictionaryStr}
    - **ATMOSPHERE**: Describe how light interacts with motion.`;
     }
 
-    // 3. BATCH PROCESSING (Parallel with Concurrency Limit)
+    // 3. BATCH PROCESSING (Parallel with Queue Workers)
     const batches: string[][] = [];
     for (let i = 0; i < segmentedLines.length; i += BATCH_SIZE) {
         batches.push(segmentedLines.slice(i, i + BATCH_SIZE));
     }
 
-    const MAX_CONCURRENCY = 3;
+    const MAX_CONCURRENCY = Math.min(5, batches.length);
     let finalScenes: any[] = new Array(segmentedLines.length);
     let completedScenesCount = 0;
 
@@ -424,7 +625,8 @@ ${commonStyleInjection}${aspectRatioInstruction}${characterDictionaryStr}
             modelName,
             apiKey,
             kymaKey,
-            kymaModelName
+            kymaModelName,
+            triggerFallback // Truyền callback vào generateBatch
         );
 
         for (let j = 0; j < batch.length; j++) {
@@ -446,15 +648,296 @@ ${commonStyleInjection}${aspectRatioInstruction}${characterDictionaryStr}
         }
     };
 
-    const executing = new Set<Promise<void>>();
-    for (let i = 0; i < batches.length; i++) {
-        const p = runBatch(i).finally(() => executing.delete(p));
-        executing.add(p);
-        if (executing.size >= MAX_CONCURRENCY) {
-            await Promise.race(executing);
+    // Fix #3: Queue Worker pattern thay cho Set + Promise.race
+    const queue = batches.map((_, i) => () => runBatch(i));
+    const workers = Array.from({ length: MAX_CONCURRENCY }, async () => {
+        while (queue.length > 0) {
+            const taskFn = queue.shift();
+            if (taskFn) {
+                await taskFn();
+            }
+        }
+    });
+
+    await Promise.all(workers);
+
+    // Fix #12: Trả về đúng provider thực tế đã chạy (sau fallback)
+    return { scenes: finalScenes.filter(Boolean), provider: finalProvider, model: finalModel };
+};
+
+// Streaming variant: yield từng scene ngay khi Gemini parse xong (real-time UI)
+export const analyzeScriptWithAIStream = async function* (
+    script: string,
+    referenceImages: { base64: string; mimeType: string }[],
+    apiKey: string,
+    styleLock: string,
+    mode: string,
+    segmentationMode: 'ai' | 'punctuation' | 'fixed',
+    modelName: string = "gemini-2.5-flash",
+    targetSceneCount: number = 10,
+    promptType: 'image' | 'video' = 'image',
+    aspectRatio: string = '16:9',
+    enableAspectRatio: boolean = false,
+    enableCharacterConsistency: boolean = false,
+    kymaKey?: string,
+    kymaModelName: string = "gpt-4o-mini"
+): AsyncGenerator<{ type: 'progress' | 'final', scenes?: any[], progress?: number, status?: string, provider?: string, model?: string, totalCount?: number }> {
+    // Theo dõi provider thực sự
+    let finalProvider = kymaKey ? "Kyma" : (apiKey ? "Gemini (User Key)" : "System Default");
+    let finalModel = kymaKey ? kymaModelName : modelName;
+
+    const triggerFallback = () => {
+        finalProvider = "Gemini (User Key)";
+        finalModel = modelName;
+    };
+
+    // 1. PRE-SEGMENTATION
+    yield { type: 'progress', scenes: [], progress: 5, status: "Đang tiền xử lý kịch bản..." };
+    const sentences = tokenizeSentences(script);
+    let segmentedLines: string[] = [];
+
+    if (sentences.length === 0) {
+        throw new Error("Kịch bản trống hoặc không thể phân mảnh.");
+    }
+
+    if (segmentationMode === 'ai') {
+        yield { type: 'progress', scenes: [], progress: 8, status: "Đang dùng AI phân tích điểm neo..." };
+
+        let anchors: { fromSentenceIdx: number; toSentenceIdx: number }[] = [];
+        if (sentences.length > 1000) {
+            const CHUNK_SIZE = 800;
+            const chunks: Sentence[][] = [];
+            for (let i = 0; i < sentences.length; i += CHUNK_SIZE) {
+                chunks.push(sentences.slice(i, i + CHUNK_SIZE));
+            }
+            let offset = 0;
+            for (const chunk of chunks) {
+                const chunkTarget = Math.max(1, Math.round((chunk.length / sentences.length) * targetSceneCount));
+                const chunkAnchors = await fetchSceneAnchors(chunk, chunkTarget, modelName, apiKey, kymaKey, kymaModelName, triggerFallback);
+                anchors = anchors.concat(
+                    chunkAnchors.map(a => ({
+                        fromSentenceIdx: a.fromSentenceIdx + offset,
+                        toSentenceIdx: a.toSentenceIdx + offset
+                    }))
+                );
+                offset += chunk.length;
+            }
+        } else {
+            anchors = await fetchSceneAnchors(sentences, targetSceneCount, modelName, apiKey, kymaKey, kymaModelName, triggerFallback);
+        }
+
+        segmentedLines = segmentByIndex(sentences, anchors);
+
+        if (segmentedLines.length < targetSceneCount) {
+            const missing = targetSceneCount - segmentedLines.length;
+            const lastHandledIdx = anchors.length > 0
+                ? Math.max(...anchors.map(a => a.toSentenceIdx))
+                : -1;
+            const remainingSentences = sentences.slice(lastHandledIdx + 1);
+            if (remainingSentences.length > 0) {
+                const fillScenes = segmentByWaterFilling(remainingSentences, missing);
+                segmentedLines = segmentedLines.concat(fillScenes);
+            }
+        }
+    } else if (segmentationMode === 'punctuation') {
+        segmentedLines = sentences.map(s => s.text);
+    } else {
+        segmentedLines = segmentByWaterFilling(sentences, targetSceneCount);
+    }
+
+    if (segmentedLines.length === 0) {
+        throw new Error("Kịch bản trống hoặc không thể phân mảnh.");
+    }
+
+    // 1.5 CHARACTER DICTIONARY
+    let characterDictionaryStr = "";
+    if (enableCharacterConsistency) {
+        try {
+            yield { type: 'progress', scenes: [], progress: 14, status: "Đang phân tích tạo hình nhân vật (Casting)..." };
+            const charDict = await fetchCharacterDictionary(script, modelName, apiKey, kymaKey, kymaModelName, triggerFallback);
+            const parsedDict = JSON.parse(charDict);
+            let dictText = "";
+            for (const [char, desc] of Object.entries(parsedDict)) {
+                dictText += `- ${char}: ${desc}\n`;
+            }
+            if (dictText) {
+                characterDictionaryStr = `\n   - **CHARACTER CONSISTENCY MANDATE**: When any of the following characters appear in the scene, you MUST incorporate their EXACT visual description into your prompt to ensure consistency across all scenes:\n${dictText}`;
+            }
+        } catch (e) {
+            console.warn("Lỗi khi tạo hình nhân vật, bỏ qua bước này: ", e);
         }
     }
-    await Promise.all(executing);
 
-    return { scenes: finalScenes.filter(Boolean), provider: usedProvider, model: usedModel };
+    // 2. CONSTRUCT PROMPT INSTRUCTIONS
+    const promptGenerationInstruction = promptGenerationInstruction_for_stream(
+        promptType, styleLock, aspectRatio, enableAspectRatio, characterDictionaryStr
+    );
+
+    const batchSystemInstruction = `You are a professional storyboard artist and script analyst.
+Your task is to generate visual prompts for a list of PRE-SEGMENTED script lines.
+
+|**CORE DIRECTIVE**
+You are given an array of "scriptLine" strings. For EACH string in the array, you must output exactly one JSON object. The number of items in your output array MUST EXACTLY MATCH the number of items in the input array.
+Do NOT modify, summarize, or skip ANY of the provided scriptLine texts. Copy them verbatim to your output.
+
+|**TASK**
+For each input scriptLine, generate a JSON object with:
+1. "scriptLine": (VERBATIM from input)
+${promptGenerationInstruction}`;
+
+    // 3. STREAMING BATCH PROCESSING
+    const batches: string[][] = [];
+    for (let i = 0; i < segmentedLines.length; i += BATCH_SIZE) {
+        batches.push(segmentedLines.slice(i, i + BATCH_SIZE));
+    }
+
+    const MAX_CONCURRENCY = Math.min(5, batches.length);
+    const finalScenes: any[] = new Array(segmentedLines.length);
+    let completedCount = 0;
+
+    // Yield thông báo bắt đầu streaming
+    yield {
+        type: 'progress',
+        scenes: [],
+        progress: 15,
+        status: `Đang sinh prompt real-time (0/${segmentedLines.length} cảnh)...`
+    };
+
+    // Mỗi batch chạy 1 generator riêng. Push kết quả vào finalScenes theo global index.
+    const generators: AsyncGenerator<{ index: number, scene: any }>[] = batches.map((batch, batchIdx) =>
+        generateBatchStream(
+            batch,
+            batchSystemInstruction,
+            promptGenerationInstruction,
+            modelName,
+            apiKey,
+            kymaKey,
+            kymaModelName,
+            triggerFallback
+        )
+    );
+
+    // Forward yield từ tất cả generators song song (mỗi generator handle 1 batch)
+    async function* raceGenerators() {
+        const pending = new Set<Promise<IteratorResult<{ index: number, scene: any }>>>();
+        for (const g of generators) {
+            pending.add(g.next());
+        }
+        while (pending.size > 0) {
+            const winner = await Promise.race(pending);
+            pending.delete(winner as any);
+            if (winner.done) continue;
+            const { index, scene } = winner.value;
+            // Tìm batchIdx dựa trên global index
+            const batchIdx = Math.floor(index / BATCH_SIZE);
+            // Lưu ý: Biến `globalIdx` ở đây phải derive từ generator order, không từ local index
+            // Để đơn giản, generator yield kèm absolute index qua callback
+            pending.add((async () => {
+                // Continue consuming this generator - track its index
+                const gen = generators[batchIdx];
+                if (!gen) return { value: undefined, done: true } as IteratorResult<any>;
+                return gen.next();
+            })() as any);
+            yield scene;
+        }
+    }
+
+    // BỎ approach phức tạp ở trên - dùng cách đơn giản hơn: workers = async iterators
+    // Mỗi worker consume 1 generator cho đến hết, rồi yield các event progress
+    type ProgressEvent = { type: 'progress', scenes: any[], progress: number, status: string };
+
+    async function* consumeGenerator(batchIdx: number): AsyncGenerator<ProgressEvent> {
+        const gen = generators[batchIdx];
+        try {
+            for await (const { index, scene } of gen) {
+                const globalIdx = batchIdx * BATCH_SIZE + index;
+                finalScenes[globalIdx] = {
+                    scriptLine: segmentedLines[globalIdx],
+                    imagePrompt: (styleLock && scene.imagePrompt) ? `${styleLock}, ${scene.imagePrompt}` : (scene.imagePrompt || ""),
+                    videoPrompt: (styleLock && scene.videoPrompt) ? `${styleLock}, ${scene.videoPrompt}` : (scene.videoPrompt || "")
+                };
+                completedCount++;
+                yield {
+                    type: 'progress',
+                    scenes: [...finalScenes.filter(Boolean)],
+                    progress: Math.floor((completedCount / segmentedLines.length) * 85) + 15,
+                    status: `Đang sinh prompt real-time (${completedCount}/${segmentedLines.length} cảnh)...`
+                };
+            }
+        } catch (e) {
+            console.warn(`Batch ${batchIdx} failed:`, e);
+        }
+    }
+
+    // Race tất cả generators, yield progress ngay khi có
+    async function* mergeGenerators() {
+        const pending: AsyncGenerator<ProgressEvent>[] = generators.map((_, i) => consumeGenerator(i));
+        const iters = pending.map(g => g[Symbol.asyncIterator]());
+
+        // Promise.race trên tất cả next() calls
+        type NextResult = { idx: number, result: IteratorResult<ProgressEvent> };
+        const activePromises = new Map<number, Promise<NextResult>>();
+        for (let i = 0; i < iters.length; i++) {
+            const p = iters[i].next().then(r => ({ idx: i, result: r }));
+            activePromises.set(i, p);
+        }
+
+        while (activePromises.size > 0) {
+            const winner = await Promise.race(activePromises.values());
+            activePromises.delete(winner.idx);
+            if (!winner.result.done && winner.result.value) {
+                yield winner.result.value;
+            }
+            if (!winner.result.done) {
+                const p = iters[winner.idx].next().then(r => ({ idx: winner.idx, result: r }));
+                activePromises.set(winner.idx, p);
+            }
+        }
+    }
+
+    for await (const evt of mergeGenerators()) {
+        yield evt;
+    }
+
+    // Yield final
+    yield {
+        type: 'final',
+        scenes: finalScenes.filter(Boolean),
+        provider: finalProvider,
+        model: finalModel,
+        totalCount: segmentedLines.length
+    };
+};
+
+// Helper: build prompt generation instruction cho streaming (sync, không promise)
+const promptGenerationInstruction_for_stream = (
+    promptType: 'image' | 'video',
+    styleLock: string,
+    aspectRatio: string,
+    enableAspectRatio: boolean,
+    characterDictionaryStr: string
+): string => {
+    const commonStyleInjection = `   - **STYLE INJECTION**: Analyze the attached Reference Images (if any). Extract their art style (e.g., color palette, lighting key, texture, rendering style) and apply it to the scene description.`;
+
+    if (promptType === 'image') {
+        const aspectRatioInstruction = enableAspectRatio ? `\n   - **ASPECT RATIO**: Output MUST include the aspect ratio parameter "--ar ${aspectRatio}" at the very end of the prompt.` : "";
+        return `2. "imagePrompt": A self-contained, highly detailed visual description for a static image, optimized for Google Nano Banana (Gemini Image Models).
+${commonStyleInjection}
+   - **NO PARAMETERS**: Do not use Midjourney parameters (like --v 6.0, --ar 16:9). Use natural, descriptive English only.${aspectRatioInstruction}${characterDictionaryStr}
+   - **VISUAL FIDELITY**: Focus on soft lighting, rich textures, and a clean composition suitable for the "Nano Banana" model (high adherence to prompt).
+   - **ACTION & MOOD**: Describe the scene action and atmosphere vividly based on the script context.`;
+    } else {
+        let videoRatioDesc = "Widescreen cinematic";
+        if (aspectRatio === '9:16') videoRatioDesc = "Vertical full-screen mobile";
+        if (aspectRatio === '1:1') videoRatioDesc = "Square format";
+
+        const aspectRatioInstruction = enableAspectRatio ? `\n   - **ASPECT RATIO & FRAMING**: Composition must be ${videoRatioDesc} (${aspectRatio}). Frame the subject accordingly.` : "";
+
+        return `2. "videoPrompt": A highly detailed video generation prompt optimized for Google Veo 3 (approx 8 seconds).
+${commonStyleInjection}${aspectRatioInstruction}${characterDictionaryStr}
+   - **VISUAL NARRATIVE**: Describe the continuous motion, physics, and changes within the clip.
+   - **CAMERA & CINEMATOGRAPHY**: Specify camera movement (e.g., "Slow tracking shot", "Drone view", "Static camera with subtle subject motion", "Rack focus").
+   - **CHARACTER & ACTION**: Describe fluid movements based on the script.
+   - **ATMOSPHERE**: Describe how light interacts with motion.`;
+    }
 };

@@ -6,18 +6,28 @@ export interface Sentence {
 
 export const tokenizeSentences = (text: string): Sentence[] => {
     if (!text) return [];
-    // Sử dụng bộ băm chuẩn của trình duyệt (cực tốt cho tiếng Việt)
-    const segmenter = new Intl.Segmenter('vi', { granularity: 'sentence' });
-    const segments = Array.from(segmenter.segment(text));
 
-    return segments
-        .map(s => s.segment.trim())
-        .filter(s => s.length > 0)
-        .map((text, idx) => ({
-            idx,
-            text,
-            wordCount: text.split(/\s+/).filter(w => w.length > 0).length
-        }));
+    let segmenter: Intl.Segmenter;
+    try {
+        segmenter = new Intl.Segmenter('vi', { granularity: 'sentence' });
+    } catch {
+        // Fallback an toàn cho trình duyệt cũ (Safari < 14)
+        return text.match(/[^.!?\n]+[.!?\n]+/g)?.map(s => s.trim()).filter(Boolean)
+            .map((t, i) => ({ idx: i, text: t, wordCount: t.split(/\s+/).filter(w => w.length > 0).length })) || [];
+    }
+
+    const result: Sentence[] = [];
+    let idx = 0;
+
+    // Tối ưu 1 vòng lặp duy nhất thay cho chain.map.filter.map
+    for (const seg of segmenter.segment(text)) {
+        const trimmed = seg.segment.trim();
+        if (trimmed.length === 0) continue;
+        const wordCount = trimmed.split(/\s+/).filter(w => w.length > 0).length;
+        result.push({ idx: idx++, text: trimmed, wordCount });
+    }
+
+    return result;
 };
 
 export const segmentByWaterFilling = (sentences: Sentence[], targetSceneCount: number): string[] => {
@@ -44,6 +54,24 @@ export const segmentByWaterFilling = (sentences: Sentence[], targetSceneCount: n
     if (currentScene.length > 0) {
         scenes.push(currentScene.join(' '));
     }
+
+    // Fallback: Tránh trường hợp tạo ra quá ít cảnh so với yêu cầu (vd 5 câu, target 20 cảnh)
+    if (scenes.length < targetSceneCount && sentences.length >= targetSceneCount) {
+        const fallbackScenes: string[] = [];
+        const sentencesPerScene = Math.max(1, Math.floor(sentences.length / targetSceneCount));
+        for (let i = 0; i < sentences.length; i += sentencesPerScene) {
+            fallbackScenes.push(sentences.slice(i, i + sentencesPerScene).map(s => s.text).join(' '));
+        }
+        // Ép số lượng cảnh bằng đúng target (gộp cuối nếu dư)
+        while (fallbackScenes.length > targetSceneCount) {
+            const last = fallbackScenes.pop();
+            if (last && fallbackScenes.length > 0) {
+                fallbackScenes[fallbackScenes.length - 1] += " " + last;
+            }
+        }
+        return fallbackScenes;
+    }
+
     return scenes;
 };
 
@@ -63,6 +91,16 @@ export const segmentByIndex = (sentences: Sentence[], aiIndices: { fromSentenceI
         const sceneTexts = sentences.slice(fromIdx, toIdx + 1).map(s => s.text);
         scenes.push(sceneTexts.join(' '));
         lastHandledIdx = toIdx;
+    }
+
+    // Append any remaining sentences (gap handling)
+    if (sentences.length > 0 && lastHandledIdx < sentences.length - 1 && scenes.length > 0) {
+        const remainder = sentences.slice(lastHandledIdx + 1).map(s => s.text).join(' ');
+        if (remainder) {
+            scenes[scenes.length - 1] = (scenes[scenes.length - 1] + ' ' + remainder).trim();
+        }
+    } else if (sentences.length > 0 && scenes.length === 0) {
+        scenes.push(sentences.map(s => s.text).join(' '));
     }
     return scenes;
 };
