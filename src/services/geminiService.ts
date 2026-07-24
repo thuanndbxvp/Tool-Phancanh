@@ -35,7 +35,7 @@ const generateBatch = async (
     modelName: string, 
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "gpt-4o-mini"
+    kymaModelName: string = "deepseek-v4-flash"
 ): Promise<any[]> => {
     const batchSystemInstruction = `You are a professional storyboard artist and script analyst. 
 Your task is to generate visual prompts for a list of PRE-SEGMENTED script lines.
@@ -158,7 +158,7 @@ const fetchSceneAnchors = async (
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "gpt-4o-mini"
+    kymaModelName: string = "deepseek-v4-flash"
 ): Promise<SceneAnchor[]> => {
     const systemInstruction = `You are a storyboard director. Divide the provided script into EXACTLY ${targetSceneCount} logical scenes. 
 DO NOT rewrite the script. For each scene, return ONLY:
@@ -250,7 +250,7 @@ const fetchCharacterDictionary = async (
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "gpt-4o-mini"
+    kymaModelName: string = "deepseek-v4-flash"
 ): Promise<string> => {
     const systemInstruction = `You are a script analyst. Read the script and identify the main characters. 
 For each character, write a concise 1-sentence visual description (age, gender, hair, clothing, key features) that fits the story.

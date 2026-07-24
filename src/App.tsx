@@ -57,8 +57,8 @@ const App: FC = () => {
                 const savedKymaModel = localStorage.getItem('sbgen_kyma_model');
                 if (savedKymaModel && models.some((m: any) => m.id === savedKymaModel)) {
                     setSelectedKymaModel(savedKymaModel);
-                } else if (models.some((m: any) => m.id === 'qwen-3-32b')) {
-                    setSelectedKymaModel('qwen-3-32b');
+                } else if (models.some((m: any) => m.id === 'deepseek-v4-flash')) {
+                    setSelectedKymaModel('deepseek-v4-flash');
                 } else if (models.length > 0) {
                     setSelectedKymaModel(models[0].id);
                 }
@@ -190,7 +190,7 @@ const App: FC = () => {
           }
 
           const expectedProvider = kymaKey ? 'Kyma' : 'Gemini';
-          const expectedModel = kymaKey ? selectedKymaModel || 'gpt-4o-mini' : selectedModel;
+          const expectedModel = kymaKey ? selectedKymaModel || 'deepseek-v4-flash' : selectedModel;
           addToast('info', 'Đang phân cảnh...', `Sử dụng ${expectedProvider} (${expectedModel})`);
 
           const results = await analyzeScriptWithAI(
@@ -207,7 +207,7 @@ const App: FC = () => {
               enableAspectRatio,
               enableCharacterConsistency,
               kymaKey,
-              selectedKymaModel || 'gpt-4o-mini',
+              selectedKymaModel || 'deepseek-v4-flash',
               (newScenes, progress, status) => {
                   setBuildProgress(progress);
                   setBuildStatus(status);

@@ -243,6 +243,9 @@ export const ApiSettingsModal: FC<{
                                 )}
                                 <div className="mt-4 p-4 bg-slate-900/50 rounded-lg border border-slate-700/50 space-y-3">
                                     <h4 className="text-sm font-bold text-emerald-400">Danh sách Model Kyma</h4>
+                                    <div className="text-xs text-amber-500/80 mb-2 italic">
+                                        💡 Mẹo: <b>deepseek-v4-flash</b> được chọn làm mặc định vì đây là model rẻ nhất mà vẫn xử lý phân cảnh (vốn tiêu tốn lượng lớn input token) một cách cực kỳ thông minh.
+                                    </div>
                                     {kymaModels.length > 0 ? (
                                         <div className="grid grid-cols-1 gap-2 max-h-[300px] overflow-y-auto pr-2">
                                             {kymaModels.map(model => (
