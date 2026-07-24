@@ -1,0 +1,41 @@
+export interface ImageFile {
+  name: string;
+  dataUrl: string;
+  base64: string;
+  mimeType: string;
+}
+
+export interface ScenePrompt {
+  id: number;
+  phase: string;
+  imagePrompt?: string;
+  videoPrompt?: string;
+  scriptLine: string;
+}
+
+export interface ApiKeyData {
+    key: string;
+    isActive: boolean;
+    status: 'valid' | 'invalid' | 'unknown';
+    lastUsed?: number;
+}
+
+export interface SavedSession {
+    id: string;
+    name: string;
+    timestamp: number;
+    prompts: ScenePrompt[];
+}
+
+export type AppMode = 'general';
+export type PromptType = 'image' | 'video';
+export type AspectRatio = '16:9' | '9:16' | '1:1';
+
+export type ToastType = 'success' | 'error' | 'info';
+
+export interface ToastMessage {
+    id: string;
+    type: ToastType;
+    title: string;
+    message: string;
+}

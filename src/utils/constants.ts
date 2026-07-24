@@ -1,0 +1,31 @@
+export const MODELS = [
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Nhanh, Ổn định, Tiết kiệm - Khuyên dùng)', recommended: true },
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Tư duy phức tạp, Phân cảnh tốt nhất)', recommended: false },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Nhanh & Ổn định)', recommended: false },
+    { id: 'gemini-flash-latest', name: 'Gemini Flash Latest (Bản ổn định nhất)', recommended: false },
+];
+
+export const PRESET_STYLES = [
+    { id: 'cinematic', label: '🎬 Điện ảnh thực tế (Cinematic)', prompt: 'Cinematic style, 8k resolution, highly detailed, professional composition, atmospheric lighting, sharp focus, photorealistic, raw style.' },
+    { id: 'anime', label: '🌸 Anime (Ghibli)', prompt: 'Anime style, Studio Ghibli inspired, vibrant colors, lush backgrounds, expressive characters, hand-drawn animation feel, detailed aesthetic.' },
+    { id: '3d_pixar', label: '🧸 Hoạt hình 3D (Pixar)', prompt: '3D Disney/Pixar style, cute characters, soft lighting, 3d render, high fidelity, octane render, smooth textures, expressive eyes.' },
+    { id: 'stick_figure', label: '🖍️ Người que (Stick Figure)', prompt: 'Stick figure style, simple line drawing, white background, childish and funny, minimal details, hand-drawn marker look.' },
+    { id: 'oil_painting', label: '🎨 Tranh sơn dầu', prompt: 'Oil painting style, textured brushstrokes, artistic, classic masterpiece vibe, rich colors, heavy impasto, traditional art.' },
+    { id: 'watercolor', label: '💧 Màu nước', prompt: 'Watercolor painting style, soft edges, pastel colors, artistic and dreamy, wet-on-wet technique, paper texture.' },
+    { id: 'cyberpunk', label: '🌃 Cyberpunk (Tương lai)', prompt: 'Cyberpunk style, neon lights, futuristic city, high tech low life, vibrant purple and blue tones, rain-slicked streets, holographic details.' },
+    { id: 'vintage_1950', label: '📺 Cổ điển 1950s', prompt: 'Vintage 1950s photo style, film grain, sepia or faded technicolor, retro fashion, old-school photography aesthetics, nostalgia.' },
+    { id: 'noir', label: '🕵️ Phim Noir (Trắng đen)', prompt: 'Film Noir style, black and white, high contrast, dramatic shadows, dutch angles, mystery, silhouette, classic cinema.' },
+    { id: 'pixel_art', label: '👾 Pixel Art (8-Bit)', prompt: '8-bit Pixel Art, retro game style, blocky, vibrant colors, nostalgic gaming aesthetic, clean sprites.' },
+    { id: 'claymation', label: '🧱 Đất sét (Claymation)', prompt: 'Claymation style, plasticine texture, stop motion look, Aardman inspired, fingerprint details on clay, handmade feel.' },
+    { id: 'comic_book', label: '💬 Truyện tranh (Comic)', prompt: 'Comic book style, bold outlines, halftone patterns, vibrant colors, action lines, graphic novel aesthetic.' },
+    { id: 'fantasy_art', label: '🐉 Giả tưởng Epic (Fantasy)', prompt: 'Fantasy art style, Dungeons & Dragons style, magical atmosphere, glowing effects, epic composition, highly detailed armor and environments.' },
+    { id: 'horror', label: '🧟 Kinh dị (Horror)', prompt: 'Horror style, dark atmosphere, mist, eerie lighting, scary vibes, muted colors, cinematic thriller look.' },
+    { id: 'pencil_sketch', label: '✏️ Phác thảo chì', prompt: 'Pencil sketch style, charcoal, rough lines, artistic shading, monochrome, sketchbook aesthetic.' },
+    { id: 'low_poly', label: '🔷 Low Poly (3D khối)', prompt: 'Low Poly 3D style, geometric shapes, flat shading, minimalist, vibrant colors, game art aesthetic.' },
+    { id: 'steampunk', label: '⚙️ Steampunk (Hơi nước)', prompt: 'Steampunk style, brass and copper tones, gears and clockwork, victorian sci-fi, steam power, industrial aesthetic.' },
+    { id: 'origami', label: '📄 Gấp giấy (Origami)', prompt: 'Paper cut-out style, origami, layered paper texture, depth of field, craft art, soft shadows.' },
+    { id: 'ukiyo_e', label: '🌊 Tranh khắc gỗ Nhật (Ukiyo-e)', prompt: 'Japanese Ukiyo-e woodblock print style, traditional patterns, flat perspective, sweeping lines, Hokusai inspired.' },
+    { id: 'abstract', label: '🌀 Trừu tượng siêu thực', prompt: 'Abstract surrealism, dreamlike, weird shapes, vibrant and contrasting colors, dali-esque, melting reality.' },
+    { id: 'vector_art', label: '📐 Vector Art (Đồ họa phẳng)', prompt: 'Vector art style, flat design, clean lines, bold colors, minimalist, corporate illustration style, smooth gradients, scalable vector graphics aesthetic.' },
+    { id: 'sitcom_cartoon', label: '📺 Sitcom Cartoon (2D)', prompt: 'American 2D sitcom cartoon style, thick black outline, flat colors, clean vector, simple and recognizable character design, slightly goofy but expressive facial expressions.' },
+];
