@@ -47,7 +47,6 @@ Do NOT modify, summarize, or skip ANY of the provided scriptLine texts. Copy the
 **TASK**
 For each input scriptLine, generate a JSON object with:
 1. "scriptLine": (VERBATIM from input)
-2. "phase": The narrative phase (e.g., "Introduction", "Climax", "Action", "Dialogue").
 ${promptGenerationInstruction}
 
 OUTPUT ONLY A JSON ARRAY.`;
@@ -55,10 +54,9 @@ OUTPUT ONLY A JSON ARRAY.`;
     const batchInput = JSON.stringify(scenesBatch, null, 2);
 
     const schemaProperties: any = {
-        scriptLine: { type: Type.STRING },
-        phase: { type: Type.STRING },
+        scriptLine: { type: Type.STRING }
     };
-    const requiredFields = ["scriptLine", "phase"];
+    const requiredFields = ["scriptLine"];
     if (promptGenerationInstruction.includes("imagePrompt")) {
         schemaProperties.imagePrompt = { type: Type.STRING };
         requiredFields.push("imagePrompt");
@@ -247,6 +245,81 @@ Your response MUST be a JSON array of objects.`;
     throw new Error("Tất cả API đều lỗi khi phân tích điểm neo.");
 };
 
+const fetchCharacterDictionary = async (
+    script: string,
+    modelName: string,
+    keyToUse: string,
+    kymaKey?: string,
+    kymaModelName: string = "gpt-4o-mini"
+): Promise<string> => {
+    const systemInstruction = `You are a script analyst. Read the script and identify the main characters. 
+For each character, write a concise 1-sentence visual description (age, gender, hair, clothing, key features) that fits the story.
+Return a JSON object where the key is the character's name and the value is their visual description.
+Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo woman, long blonde hair, red dress"}`;
+
+    const attemptGemini = async (key: string) => {
+        const ai = new GoogleGenAI({ apiKey: key });
+        const response = await ai.models.generateContent({
+            model: modelName,
+            contents: `Script:\n\n${script}`,
+            config: {
+                systemInstruction: systemInstruction,
+                responseMimeType: "application/json",
+            }
+        });
+        const text = response.text;
+        if (!text) throw new Error("AI không phản hồi.");
+        return text.trim();
+    };
+
+    const attemptKyma = async (key: string) => {
+        const response = await fetch('https://kymaapi.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${key}`
+            },
+            body: JSON.stringify({
+                model: kymaModelName,
+                messages: [
+                    { role: 'system', content: systemInstruction },
+                    { role: 'user', content: `Script:\n\n${script}` }
+                ],
+                temperature: 0.3
+            })
+        });
+        if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
+        const data = await response.json();
+        let text = data.choices[0].message.content;
+        const match = text.match(/\{[\s\S]*\}/);
+        if (match) {
+            text = match[0];
+        } else {
+            text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        }
+        return text;
+    };
+
+    if (kymaKey) {
+        try { return await attemptKyma(kymaKey); } catch (e) { console.warn("Kyma failed for characters, falling back...", e); }
+    }
+    if (keyToUse) {
+        try { return await attemptGemini(keyToUse); } catch (e) { console.warn("User key failed for characters, falling back...", e); }
+    }
+    
+    const platformKey = process.env.GEMINI_API_KEY;
+    if (platformKey) {
+        try { return await attemptGemini(platformKey); } catch(e) {}
+    }
+
+    for (const fb of FALLBACK_API_KEYS) {
+        try { return await attemptGemini(fb); } catch(e) {}
+    }
+    try { return await attemptKyma(FALLBACK_KYMA_KEY); } catch(e) {}
+
+    throw new Error("Tất cả API đều lỗi khi phân tích nhân vật.");
+};
+
 export const analyzeScriptWithAI = async (
     script: string,
     referenceImages: { base64: string; mimeType: string }[],
@@ -259,6 +332,7 @@ export const analyzeScriptWithAI = async (
     promptType: 'image' | 'video' = 'image',
     aspectRatio: string = '16:9',
     enableAspectRatio: boolean = false,
+    enableCharacterConsistency: boolean = false,
     kymaKey?: string,
     kymaModelName: string = "gpt-4o-mini",
     onProgress?: (scenes: any[], progress: number, statusText: string) => void
@@ -278,6 +352,26 @@ export const analyzeScriptWithAI = async (
     if (segmentedLines.length === 0) {
         throw new Error("Kịch bản trống hoặc không thể phân mảnh.");
     }
+    
+    // 1.5 CHARACTER DICTIONARY FETCH
+    let characterDictionaryStr = "";
+    if (enableCharacterConsistency) {
+        try {
+            if (onProgress) onProgress([], 15, "Đang phân tích tạo hình nhân vật (Casting)...");
+            const charDict = await fetchCharacterDictionary(script, modelName, apiKey, kymaKey, kymaModelName);
+            // charDict is a JSON string like {"Hung": "..."}
+            const parsedDict = JSON.parse(charDict);
+            let dictText = "";
+            for (const [char, desc] of Object.entries(parsedDict)) {
+                dictText += `- ${char}: ${desc}\n`;
+            }
+            if (dictText) {
+                characterDictionaryStr = `\n   - **CHARACTER CONSISTENCY MANDATE**: When any of the following characters appear in the scene, you MUST incorporate their EXACT visual description into your prompt to ensure consistency across all scenes:\n${dictText}`;
+            }
+        } catch (e) {
+            console.warn("Lỗi khi tạo hình nhân vật, bỏ qua bước này: ", e);
+        }
+    }
 
     // 2. CONSTRUCT PROMPT INSTRUCTIONS
     let promptGenerationInstruction = "";
@@ -286,10 +380,9 @@ export const analyzeScriptWithAI = async (
 
     if (promptType === 'image') {
         const aspectRatioInstruction = enableAspectRatio ? `\n   - **ASPECT RATIO**: Output MUST include the aspect ratio parameter "--ar ${aspectRatio}" at the very end of the prompt.` : "";
-        promptGenerationInstruction = `3. "imagePrompt": A self-contained, highly detailed visual description for a static image, optimized for Google Nano Banana (Gemini Image Models).
+        promptGenerationInstruction = `2. "imagePrompt": A self-contained, highly detailed visual description for a static image, optimized for Google Nano Banana (Gemini Image Models).
 ${commonStyleInjection}
-   - **NO PARAMETERS**: Do not use Midjourney parameters (like --v 6.0, --ar 16:9). Use natural, descriptive English only.${aspectRatioInstruction}
-   - **CHARACTER CONSISTENCY**: Analyze the script to identify the main characters. Describe their appearance consistently in EVERY SINGLE PROMPT (Age, Gender, Ethnicity, Hair, Clothing, key features) based on the script's context.
+   - **NO PARAMETERS**: Do not use Midjourney parameters (like --v 6.0, --ar 16:9). Use natural, descriptive English only.${aspectRatioInstruction}${characterDictionaryStr}
    - **VISUAL FIDELITY**: Focus on soft lighting, rich textures, and a clean composition suitable for the "Nano Banana" model (high adherence to prompt).
    - **ACTION & MOOD**: Describe the scene action and atmosphere vividly based on the script context.`;
     } else {
@@ -299,8 +392,8 @@ ${commonStyleInjection}
         
         const aspectRatioInstruction = enableAspectRatio ? `\n   - **ASPECT RATIO & FRAMING**: Composition must be ${videoRatioDesc} (${aspectRatio}). Frame the subject accordingly.` : "";
 
-        promptGenerationInstruction = `3. "videoPrompt": A highly detailed video generation prompt optimized for Google Veo 3 (approx 8 seconds).
-${commonStyleInjection}${aspectRatioInstruction}
+        promptGenerationInstruction = `2. "videoPrompt": A highly detailed video generation prompt optimized for Google Veo 3 (approx 8 seconds).
+${commonStyleInjection}${aspectRatioInstruction}${characterDictionaryStr}
    - **VISUAL NARRATIVE**: Describe the continuous motion, physics, and changes within the clip.
    - **CAMERA & CINEMATOGRAPHY**: Specify camera movement (e.g., "Slow tracking shot", "Drone view", "Static camera with subtle subject motion", "Rack focus").
    - **CHARACTER & ACTION**: Describe fluid movements based on the script.
@@ -341,7 +434,6 @@ ${commonStyleInjection}${aspectRatioInstruction}
 
             finalScenes.push({
                 scriptLine: batch[j], // guarantee original script text
-                phase: aiResult.phase || "Action",
                 imagePrompt: finalImagePrompt,
                 videoPrompt: finalVideoPrompt
             });

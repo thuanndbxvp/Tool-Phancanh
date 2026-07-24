@@ -7,7 +7,6 @@ export interface ImageFile {
 
 export interface ScenePrompt {
   id: number | string;
-  phase: string;
   imagePrompt?: string;
   videoPrompt?: string;
   scriptLine: string;

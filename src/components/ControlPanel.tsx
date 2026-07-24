@@ -29,6 +29,8 @@ interface ControlPanelProps {
   setAspectRatio: (ratio: AspectRatio) => void;
   enableAspectRatio: boolean;
   setEnableAspectRatio: (enable: boolean) => void;
+  enableCharacterConsistency: boolean;
+  setEnableCharacterConsistency: (enable: boolean) => void;
   selectedModel: string;
 }
 
@@ -42,6 +44,7 @@ export const ControlPanel: FC<ControlPanelProps> = ({
     selectedStyleId, setSelectedStyleId,
     aspectRatio, setAspectRatio,
     enableAspectRatio, setEnableAspectRatio,
+    enableCharacterConsistency, setEnableCharacterConsistency,
     selectedModel
 }) => {
   const scriptFileRef = useRef<HTMLInputElement>(null);
@@ -177,7 +180,7 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                         Chỉ định khuôn hình trong prompt output
                     </label>
                 </div>
-                <div className={`flex gap-2 transition-opacity duration-300 ${enableAspectRatio ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                <div className={`flex gap-2 transition-opacity duration-300 mb-4 ${enableAspectRatio ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
                     <button
                         onClick={() => setAspectRatio('16:9')}
                         className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all border ${aspectRatio === '16:9' ? 'bg-slate-700 border-emerald-500 text-emerald-400 shadow-sm' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'}`}
@@ -196,6 +199,26 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                     >
                         1:1 (Vuông)
                     </button>
+                </div>
+
+                <div className="flex flex-col mb-2">
+                    <div className="flex items-center gap-2">
+                        <input 
+                            type="checkbox" 
+                            id="enableCharacterConsistency" 
+                            checked={enableCharacterConsistency}
+                            onChange={(e) => setEnableCharacterConsistency(e.target.checked)}
+                            className="w-4 h-4 text-emerald-500 bg-slate-800 border-slate-600 rounded focus:ring-emerald-500 focus:ring-2"
+                        />
+                        <label htmlFor="enableCharacterConsistency" className="text-sm font-medium text-slate-300 cursor-pointer">
+                            Đồng nhất mô tả nhân vật trong prompt
+                        </label>
+                    </div>
+                    {enableCharacterConsistency && (
+                        <p className="text-[11px] text-amber-500/80 ml-6 mt-1.5 leading-tight italic">
+                            ⚠️ Lưu ý: Tính năng này làm quá trình xử lý chậm hơn 10-15s và tốn nhiều token AI hơn.
+                        </p>
+                    )}
                 </div>
             </div>
 

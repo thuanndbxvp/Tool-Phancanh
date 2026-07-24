@@ -26,6 +26,7 @@ const App: FC = () => {
   const [promptType, setPromptType] = useState<PromptType>('image');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [enableAspectRatio, setEnableAspectRatio] = useState<boolean>(false);
+  const [enableCharacterConsistency, setEnableCharacterConsistency] = useState<boolean>(false);
   const [selectedStyleId, setSelectedStyleId] = useState<string>('reference');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   
@@ -204,6 +205,7 @@ const App: FC = () => {
               promptType,
               aspectRatio,
               enableAspectRatio,
+              enableCharacterConsistency,
               kymaKey,
               selectedKymaModel || 'gpt-4o-mini',
               (newScenes, progress, status) => {
@@ -211,7 +213,6 @@ const App: FC = () => {
                   setBuildStatus(status);
                   const incrementalPrompts = newScenes.map((item: any, index: number) => ({
                       id: `scene-${index}`,
-                      phase: item.phase,
                       imagePrompt: item.imagePrompt,
                       videoPrompt: item.videoPrompt,
                       scriptLine: item.scriptLine
@@ -222,7 +223,6 @@ const App: FC = () => {
           
           const newPrompts = results.scenes.map((item: any, index: number) => ({
               id: `scene-${index}`,
-              phase: item.phase,
               imagePrompt: item.imagePrompt,
               videoPrompt: item.videoPrompt,
               scriptLine: item.scriptLine
@@ -354,6 +354,9 @@ const App: FC = () => {
                         aspectRatio={aspectRatio}
                         setAspectRatio={setAspectRatio}
                         enableAspectRatio={enableAspectRatio}
+                        setEnableAspectRatio={setEnableAspectRatio}
+                        enableCharacterConsistency={enableCharacterConsistency}
+                        setEnableCharacterConsistency={setEnableCharacterConsistency}
                         selectedModel={selectedModel}
                     />
                 </div>
@@ -389,7 +392,6 @@ const App: FC = () => {
                                     <div key={scene.id} className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-emerald-500/30 transition-all shadow-sm">
                                         <div className="flex justify-between items-start mb-3">
                                             <span className="bg-slate-800 text-slate-400 text-xs font-bold px-2 py-1 rounded uppercase tracking-wider">Cảnh {idx + 1}</span>
-                                            <span className="text-xs font-mono text-emerald-400">{scene.phase}</span>
                                         </div>
                                         <div className="mb-4">
                                             <p className="text-slate-300 italic font-medium border-l-2 border-emerald-500/50 pl-3 py-1">"{scene.scriptLine}"</p>
