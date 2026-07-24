@@ -1,6 +1,7 @@
 import React, { FC, useRef, useMemo, useState } from 'react';
 import { AppMode, PromptType, AspectRatio } from '../types';
 import { PRESET_STYLES } from '../utils/constants';
+import { calculateOptimalSceneCount } from '../utils/helpers';
 import { ChevronDownIcon, ChevronUpIcon, DocumentIcon, PhotoIcon, VideoCameraIcon, SpinnerIcon, ArrowPathIcon, InformationCircleIcon } from './icons';
 
 interface ControlPanelProps {
@@ -50,6 +51,7 @@ export const ControlPanel: FC<ControlPanelProps> = ({
   const scriptFileRef = useRef<HTMLInputElement>(null);
   const [isCustomStyleExpanded, setIsCustomStyleExpanded] = useState(false);
   
+  const optimalSceneCount = useMemo(() => calculateOptimalSceneCount(scenario), [scenario]);
   const scriptReady = useMemo(() => scenario.trim() !== "" || scriptFileName !== null, [scenario, scriptFileName]);
 
   const canBuild = useMemo(() => {
@@ -255,10 +257,18 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                             min="1" 
                             max="500"
                             value={targetSceneCount}
-                            onChange={(e) => setTargetSceneCount(Math.max(1, parseInt(e.target.value) || 10))}
+                            onChange={(e) => setTargetSceneCount(Math.max(1, parseInt(e.target.value) || 1))}
                             className="w-full bg-slate-800 border border-slate-700 p-1.5 rounded text-center text-white text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
                             disabled={segmentationMode !== 'fixed' && segmentationMode !== 'ai'}
                         />
+                        {scenario.length > 50 && (segmentationMode === 'fixed' || segmentationMode === 'ai') && (
+                            <div className="mt-2 text-[10px] text-amber-500/80 leading-tight text-center">
+                                💡 Gợi ý (chuẩn Video 8s): <br/>
+                                <span className="font-bold text-emerald-400 cursor-pointer hover:underline" onClick={() => setTargetSceneCount(optimalSceneCount)}>
+                                    ~{optimalSceneCount} cảnh (Bấm để gán)
+                                </span>
+                            </div>
+                        )}
                     </div>
                 </div>
 

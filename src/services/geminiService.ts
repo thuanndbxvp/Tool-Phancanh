@@ -160,13 +160,13 @@ const fetchSceneAnchors = async (
     kymaKey?: string,
     kymaModelName: string = "deepseek-v4-flash"
 ): Promise<SceneAnchor[]> => {
-    const systemInstruction = `You are a storyboard director. Divide the provided script into EXACTLY ${targetSceneCount} logical scenes. 
+    const systemInstruction = `You are a storyboard director. Divide the provided script into EXACTLY ${targetSceneCount} logical scenes. Ensure you generate all ${targetSceneCount} scenes.
 DO NOT rewrite the script. For each scene, return ONLY:
 1. "sceneNumber": The scene number.
 2. "startAnchor": The FIRST 5-7 words of the scene EXACTLY as they appear in the script.
 3. "endAnchor": The LAST 5-7 words of the scene EXACTLY as they appear in the script.
 
-Your response MUST be a JSON array of objects.`;
+Your response MUST be a JSON array of objects with exactly ${targetSceneCount} items.`;
 
     const schemaProperties: any = {
         sceneNumber: { type: Type.INTEGER },

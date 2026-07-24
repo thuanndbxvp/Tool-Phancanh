@@ -264,3 +264,15 @@ export const segmentByAnchors = (script: string, anchors: SceneAnchor[]): string
 
     return result;
 };
+
+// --- ALGORITHM TO CALCULATE OPTIMAL SCENE COUNT ---
+// Based on 8s Video limit (Veo3/Sora) ~ 20-25 words per scene.
+export const calculateOptimalSceneCount = (script: string): number => {
+    if (!script || script.trim().length === 0) return 1;
+    // Count words roughly by splitting by whitespace
+    const words = script.trim().split(/\s+/).filter(w => w.length > 0);
+    const wordCount = words.length;
+    // 25 words per scene is roughly 10 seconds of voiceover, a safe buffer for 8s videos.
+    const optimalCount = Math.round(wordCount / 25);
+    return Math.max(1, optimalCount); // At least 1 scene
+};
