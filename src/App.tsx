@@ -197,10 +197,7 @@ const App: FC = () => {
 
           const expectedProvider = kymaKey ? 'Kyma' : 'Gemini';
           const expectedModel = kymaKey ? selectedKymaModel || 'deepseek-v4-flash' : selectedModel;
-          const initialMessage = kymaKey
-              ? `Đang thử Kyma trước (${expectedModel}), sẽ fallback Gemini nếu lỗi.`
-              : `Đang dùng Gemini (${expectedModel}).`;
-          addToast('info', 'Đang phân cảnh...', initialMessage);
+          addToast('info', 'Đang phân cảnh...', `Sử dụng ${expectedProvider} (${expectedModel}).`);
 
           const stream = analyzeScriptWithAIStream(
               scenario,
@@ -253,9 +250,6 @@ const App: FC = () => {
           setPrompts(newPrompts);
           saveSession(newPrompts, scriptFileName || "Manual Scenario");
 
-          if (finalResults.provider !== expectedProvider || finalResults.model !== expectedModel) {
-              addToast('info', 'Tự động chuyển đổi', `Dùng ${finalResults.provider} (${finalResults.model}) do cấu hình ban đầu gặp lỗi.`);
-          }
           addToast('success', 'Thành công', `Đã tạo ${newPrompts.length}/${finalResults.totalCount} cảnh bằng ${finalResults.provider} (${finalResults.model}).`);
           
       } catch (error: any) {

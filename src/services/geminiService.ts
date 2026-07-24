@@ -70,8 +70,7 @@ const generateBatch = async (
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "deepseek-v4-flash",
-    onFallback?: () => void
+    kymaModelName: string = "deepseek-v4-flash"
 ): Promise<any[]> => {
     const batchSystemInstruction = `You are a professional storyboard artist and script analyst. 
 Your task is to generate visual prompts for a list of PRE-SEGMENTED script lines.
@@ -160,24 +159,14 @@ OUTPUT ONLY A JSON ARRAY.`;
         }
     };
 
+    // Provider đơn nhất: nếu có Kyma → dùng Kyma, ngược lại → dùng Gemini.
+    // Không fallback giữa các provider (đã có xoay vòng key).
     if (kymaKey) {
-        try {
-            return await withRetry((k) => attemptKyma(k), kymaKey);
-        } catch (e) {
-            console.warn("Kyma failed for batch, falling back...", e);
-            if (onFallback) onFallback();
-        }
+        return await withRetry((k) => attemptKyma(k), kymaKey);
     }
-
     if (keyToUse) {
-        try {
-            return await withRetry((k) => attemptGemini(k), keyToUse);
-        } catch (e) {
-            console.warn("User key failed for batch, falling back...", e);
-        }
+        return await withRetry((k) => attemptGemini(k), keyToUse);
     }
-
-
 
     throw new Error("Tất cả API đều lỗi khi xử lý batch.");
 };
@@ -190,51 +179,46 @@ const generateBatchStream = async function* (
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "deepseek-v4-flash",
-    onFallback?: () => void
+    kymaModelName: string = "deepseek-v4-flash"
 ): AsyncGenerator<{ index: number, scene: any }> {
+    // Provider đơn nhất: nếu có Kyma → dùng Kyma, ngược lại → dùng Gemini.
     // Kyma path: wrapper non-streaming rồi yield từng cái (Kyma API không support stream)
     if (kymaKey) {
-        try {
-            const response = await fetch('https://kymaapi.com/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${kymaKey.split(',')[0].trim()}`
-                },
-                body: JSON.stringify({
-                    model: kymaModelName,
-                    messages: [
-                        { role: 'system', content: systemInstruction },
-                        { role: 'user', content: `Generate prompts for these lines:\n${JSON.stringify(scenesBatch, null, 2)}` }
-                    ],
-                    temperature: 0.7,
-                    max_tokens: kymaModelName.includes('flash') ? 10000 : 8000
-                })
-            });
-            if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
-            const data = await response.json();
-            let text = data.choices[0].message.content;
-            const match = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
-            if (match) {
-                text = match[0];
-            } else {
-                text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-            }
-            let scenes: any[];
-            try {
-                scenes = JSON.parse(text);
-            } catch {
-                scenes = bestEffortParse(text);
-            }
-            for (let i = 0; i < scenes.length; i++) {
-                yield { index: i, scene: scenes[i] };
-            }
-            return;
-        } catch (e) {
-            console.warn("Kyma failed for stream batch, falling back to Gemini stream...", e);
-            if (onFallback) onFallback();
+        const response = await fetch('https://kymaapi.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${kymaKey.split(',')[0].trim()}`
+            },
+            body: JSON.stringify({
+                model: kymaModelName,
+                messages: [
+                    { role: 'system', content: systemInstruction },
+                    { role: 'user', content: `Generate prompts for these lines:\n${JSON.stringify(scenesBatch, null, 2)}` }
+                ],
+                temperature: 0.7,
+                max_tokens: kymaModelName.includes('flash') ? 10000 : 8000
+            })
+        });
+        if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
+        const data = await response.json();
+        let text = data.choices[0].message.content;
+        const match = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+        if (match) {
+            text = match[0];
+        } else {
+            text = text.replace(/```json/g, '').replace(/```/g, '').trim();
         }
+        let scenes: any[];
+        try {
+            scenes = JSON.parse(text);
+        } catch {
+            scenes = bestEffortParse(text);
+        }
+        for (let i = 0; i < scenes.length; i++) {
+            yield { index: i, scene: scenes[i] };
+        }
+        return;
     }
 
     // Gemini streaming path
@@ -295,8 +279,7 @@ const fetchSceneAnchors = async (
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "deepseek-v4-flash",
-    onFallback?: () => void
+    kymaModelName: string = "deepseek-v4-flash"
 ): Promise<{ fromSentenceIdx: number, toSentenceIdx: number }[]> => {
     const scriptText = sentences.map(s => `[${s.idx}] ${s.text}`).join('\n');
 
@@ -371,22 +354,11 @@ Example for ${targetSceneCount} scenes:
     };
 
     if (kymaKey) {
-        try {
-            return await withRetry((k) => attemptKyma(k), kymaKey);
-        } catch (e) {
-            console.warn("Kyma failed for anchors, falling back...", e);
-            if (onFallback) onFallback();
-        }
+        return await withRetry((k) => attemptKyma(k), kymaKey);
     }
     if (keyToUse) {
-        try {
-            return await withRetry((k) => attemptGemini(k), keyToUse);
-        } catch (e) {
-            console.warn("User key failed for anchors, falling back...", e);
-        }
+        return await withRetry((k) => attemptGemini(k), keyToUse);
     }
-
-
 
     throw new Error("Lỗi phân tích điểm neo (Anchors).");
 };
@@ -396,8 +368,7 @@ const fetchCharacterDictionary = async (
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "deepseek-v4-flash",
-    onFallback?: () => void
+    kymaModelName: string = "deepseek-v4-flash"
 ): Promise<string> => {
     const cached = Cache.getCharacters(script, kymaKey ? kymaModelName : modelName);
     if (cached) return cached;
@@ -453,19 +424,9 @@ Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo wo
 
     let result: string | null = null;
     if (kymaKey) {
-        try {
-            result = await withRetry((k) => attemptKyma(k), kymaKey);
-        } catch (e) {
-            console.warn("Kyma failed for characters, falling back...", e);
-            if (onFallback) onFallback();
-        }
-    }
-    if (!result && keyToUse) {
-        try {
-            result = await withRetry((k) => attemptGemini(k), keyToUse);
-        } catch (e) {
-            console.warn("User key failed for characters, falling back...", e);
-        }
+        result = await withRetry((k) => attemptKyma(k), kymaKey);
+    } else if (keyToUse) {
+        result = await withRetry((k) => attemptGemini(k), keyToUse);
     }
 
     if (!result) throw new Error("Tất cả API đều lỗi khi phân tích nhân vật.");
@@ -499,15 +460,7 @@ export const analyzeScriptWithAI = async (
     if (!kymaKey && !apiKey) {
         throw new Error("Không có API key. Vui lòng cấu hình Kyma hoặc Gemini key trước khi phân cảnh.");
     }
-
-    const triggerFallback = () => {
-        if (apiKey) {
-            finalProvider = "Gemini (User Key)";
-            finalModel = modelName;
-        } else {
-            throw new Error("Kyma thất bại và không có Gemini key để fallback. Vui lòng thêm Gemini API key.");
-        }
-    };
+    // No fallback: provider chỉ dựa trên key đã cấu hình.
 
     // 1. PRE-SEGMENTATION (Tokenize + AI/Water-fill)
     if (onProgress) onProgress([], 5, "Đang tiền xử lý kịch bản...");
@@ -533,7 +486,7 @@ export const analyzeScriptWithAI = async (
             let offset = 0;
             for (const chunk of chunks) {
                 const chunkTarget = Math.max(1, Math.round((chunk.length / sentences.length) * targetSceneCount));
-                const chunkAnchors = await fetchSceneAnchors(chunk, chunkTarget, modelName, apiKey, kymaKey, kymaModelName, triggerFallback);
+                const chunkAnchors = await fetchSceneAnchors(chunk, chunkTarget, modelName, apiKey, kymaKey, kymaModelName);
                 anchors = anchors.concat(
                     chunkAnchors.map(a => ({
                         fromSentenceIdx: a.fromSentenceIdx + offset,
@@ -543,7 +496,7 @@ export const analyzeScriptWithAI = async (
                 offset += chunk.length;
             }
         } else {
-            anchors = await fetchSceneAnchors(sentences, targetSceneCount, modelName, apiKey, kymaKey, kymaModelName, triggerFallback);
+            anchors = await fetchSceneAnchors(sentences, targetSceneCount, modelName, apiKey, kymaKey, kymaModelName);
         }
 
         segmentedLines = segmentByIndex(sentences, anchors);
@@ -567,7 +520,7 @@ export const analyzeScriptWithAI = async (
     if (enableCharacterConsistency) {
         try {
             if (onProgress) onProgress([], 15, "Đang phân tích tạo hình nhân vật (Casting)...");
-            const charDict = await fetchCharacterDictionary(script, modelName, apiKey, kymaKey, kymaModelName, triggerFallback);
+            const charDict = await fetchCharacterDictionary(script, modelName, apiKey, kymaKey, kymaModelName);
             // charDict is a JSON string like {"Hung": "..."}
             const parsedDict = JSON.parse(charDict);
             let dictText = "";
@@ -628,8 +581,7 @@ ${commonStyleInjection}${aspectRatioInstruction}${characterDictionaryStr}
             modelName,
             apiKey,
             kymaKey,
-            kymaModelName,
-            triggerFallback // Truyền callback vào generateBatch
+            kymaModelName
         );
 
         for (let j = 0; j < batch.length; j++) {
@@ -693,15 +645,7 @@ export const analyzeScriptWithAIStream = async function* (
     if (!kymaKey && !apiKey) {
         throw new Error("Không có API key. Vui lòng cấu hình Kyma hoặc Gemini key trước khi phân cảnh.");
     }
-
-    const triggerFallback = () => {
-        if (apiKey) {
-            finalProvider = "Gemini (User Key)";
-            finalModel = modelName;
-        } else {
-            throw new Error("Kyma thất bại và không có Gemini key để fallback. Vui lòng thêm Gemini API key.");
-        }
-    };
+    // No fallback: provider chỉ dựa trên key đã cấu hình.
 
     // 1. PRE-SEGMENTATION
     yield { type: 'progress', scenes: [], progress: 5, status: "Đang tiền xử lý kịch bản..." };
@@ -725,7 +669,7 @@ export const analyzeScriptWithAIStream = async function* (
             let offset = 0;
             for (const chunk of chunks) {
                 const chunkTarget = Math.max(1, Math.round((chunk.length / sentences.length) * targetSceneCount));
-                const chunkAnchors = await fetchSceneAnchors(chunk, chunkTarget, modelName, apiKey, kymaKey, kymaModelName, triggerFallback);
+                const chunkAnchors = await fetchSceneAnchors(chunk, chunkTarget, modelName, apiKey, kymaKey, kymaModelName);
                 anchors = anchors.concat(
                     chunkAnchors.map(a => ({
                         fromSentenceIdx: a.fromSentenceIdx + offset,
@@ -735,7 +679,7 @@ export const analyzeScriptWithAIStream = async function* (
                 offset += chunk.length;
             }
         } else {
-            anchors = await fetchSceneAnchors(sentences, targetSceneCount, modelName, apiKey, kymaKey, kymaModelName, triggerFallback);
+            anchors = await fetchSceneAnchors(sentences, targetSceneCount, modelName, apiKey, kymaKey, kymaModelName);
         }
 
         segmentedLines = segmentByIndex(sentences, anchors);
@@ -759,7 +703,7 @@ export const analyzeScriptWithAIStream = async function* (
     if (enableCharacterConsistency) {
         try {
             yield { type: 'progress', scenes: [], progress: 14, status: "Đang phân tích tạo hình nhân vật (Casting)..." };
-            const charDict = await fetchCharacterDictionary(script, modelName, apiKey, kymaKey, kymaModelName, triggerFallback);
+            const charDict = await fetchCharacterDictionary(script, modelName, apiKey, kymaKey, kymaModelName);
             const parsedDict = JSON.parse(charDict);
             let dictText = "";
             for (const [char, desc] of Object.entries(parsedDict)) {
@@ -817,8 +761,7 @@ ${promptGenerationInstruction}`;
             modelName,
             apiKey,
             kymaKey,
-            kymaModelName,
-            triggerFallback
+            kymaModelName
         )
     );
 
