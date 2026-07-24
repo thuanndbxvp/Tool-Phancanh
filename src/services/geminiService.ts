@@ -142,12 +142,19 @@ OUTPUT ONLY A JSON ARRAY.`;
         });
         if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
         const data = await response.json();
-        let text = data.choices[0].message.content;
+        const content = data?.choices?.[0]?.message?.content;
+        if (!content || typeof content !== 'string') {
+            throw new Error("Kyma trả response rỗng hoặc không hợp lệ.");
+        }
+        let text = content;
         const match = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
         if (match) {
             text = match[0];
         } else {
             text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        }
+        if (!text) {
+            throw new Error("Kyma trả content rỗng sau khi strip markdown.");
         }
         try {
             return JSON.parse(text);
@@ -202,18 +209,28 @@ const generateBatchStream = async function* (
         });
         if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
         const data = await response.json();
-        let text = data.choices[0].message.content;
+        const content = data?.choices?.[0]?.message?.content;
+        if (!content || typeof content !== 'string') {
+            throw new Error("Kyma trả response rỗng hoặc không hợp lệ.");
+        }
+        let text = content;
         const match = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
         if (match) {
             text = match[0];
         } else {
             text = text.replace(/```json/g, '').replace(/```/g, '').trim();
         }
+        if (!text) {
+            throw new Error("Kyma trả content rỗng sau khi strip markdown.");
+        }
         let scenes: any[];
         try {
             scenes = JSON.parse(text);
         } catch {
             scenes = bestEffortParse(text);
+        }
+        if (scenes.length === 0) {
+            throw new Error("Kyma trả về JSON không chứa scene hợp lệ.");
         }
         for (let i = 0; i < scenes.length; i++) {
             yield { index: i, scene: scenes[i] };
@@ -412,7 +429,12 @@ Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo wo
         });
         if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
         const data = await response.json();
-        let text = data.choices[0].message.content;
+        const content = data?.choices?.[0]?.message?.content;
+        if (!content || typeof content !== 'string') {
+            console.warn("Kyma returned empty/invalid content for characters");
+            return ""; // Trả rỗng để caller skip tạo dictionary
+        }
+        let text = content;
         const match = text.match(/\{[\s\S]*\}/);
         if (match) {
             text = match[0];
@@ -521,14 +543,18 @@ export const analyzeScriptWithAI = async (
         try {
             if (onProgress) onProgress([], 15, "Đang phân tích tạo hình nhân vật (Casting)...");
             const charDict = await fetchCharacterDictionary(script, modelName, apiKey, kymaKey, kymaModelName);
-            // charDict is a JSON string like {"Hung": "..."}
-            const parsedDict = JSON.parse(charDict);
-            let dictText = "";
-            for (const [char, desc] of Object.entries(parsedDict)) {
-                dictText += `- ${char}: ${desc}\n`;
-            }
-            if (dictText) {
-                characterDictionaryStr = `\n   - **CHARACTER CONSISTENCY MANDATE**: When any of the following characters appear in the scene, you MUST incorporate their EXACT visual description into your prompt to ensure consistency across all scenes:\n${dictText}`;
+            if (!charDict) {
+                console.warn("Character dictionary rỗng, bỏ qua bước này.");
+            } else {
+                // charDict is a JSON string like {"Hung": "..."}
+                const parsedDict = JSON.parse(charDict);
+                let dictText = "";
+                for (const [char, desc] of Object.entries(parsedDict)) {
+                    dictText += `- ${char}: ${desc}\n`;
+                }
+                if (dictText) {
+                    characterDictionaryStr = `\n   - **CHARACTER CONSISTENCY MANDATE**: When any of the following characters appear in the scene, you MUST incorporate their EXACT visual description into your prompt to ensure consistency across all scenes:\n${dictText}`;
+                }
             }
         } catch (e) {
             console.warn("Lỗi khi tạo hình nhân vật, bỏ qua bước này: ", e);
@@ -704,13 +730,17 @@ export const analyzeScriptWithAIStream = async function* (
         try {
             yield { type: 'progress', scenes: [], progress: 14, status: "Đang phân tích tạo hình nhân vật (Casting)..." };
             const charDict = await fetchCharacterDictionary(script, modelName, apiKey, kymaKey, kymaModelName);
-            const parsedDict = JSON.parse(charDict);
-            let dictText = "";
-            for (const [char, desc] of Object.entries(parsedDict)) {
-                dictText += `- ${char}: ${desc}\n`;
-            }
-            if (dictText) {
-                characterDictionaryStr = `\n   - **CHARACTER CONSISTENCY MANDATE**: When any of the following characters appear in the scene, you MUST incorporate their EXACT visual description into your prompt to ensure consistency across all scenes:\n${dictText}`;
+            if (!charDict) {
+                console.warn("Character dictionary rỗng, bỏ qua bước này.");
+            } else {
+                const parsedDict = JSON.parse(charDict);
+                let dictText = "";
+                for (const [char, desc] of Object.entries(parsedDict)) {
+                    dictText += `- ${char}: ${desc}\n`;
+                }
+                if (dictText) {
+                    characterDictionaryStr = `\n   - **CHARACTER CONSISTENCY MANDATE**: When any of the following characters appear in the scene, you MUST incorporate their EXACT visual description into your prompt to ensure consistency across all scenes:\n${dictText}`;
+                }
             }
         } catch (e) {
             console.warn("Lỗi khi tạo hình nhân vật, bỏ qua bước này: ", e);
