@@ -174,17 +174,15 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                 <div className="flex gap-3 mb-3">
                     <button
                         onClick={() => setPromptType('image')}
-                        className={`flex-1 p-3 rounded-xl text-xs font-bold transition-all border shadow-lg flex flex-col items-center gap-1 text-center ${promptType === 'image' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-500'}`}
+                        className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border shadow-md flex items-center justify-center gap-2 ${promptType === 'image' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-500'}`}
                     >
-                        <PhotoIcon className="h-5 w-5 mb-1" />
-                        <span>Prompt Ảnh<br/><span className="text-[10px] font-medium opacity-80">(Nano Banana)</span></span>
+                        <span>Prompt Ảnh <span className="font-medium opacity-80 font-normal ml-1">(Nano Banana)</span></span>
                     </button>
                     <button
                         onClick={() => setPromptType('video')}
-                        className={`flex-1 p-3 rounded-xl text-xs font-bold transition-all border shadow-lg flex flex-col items-center gap-1 text-center ${promptType === 'video' ? 'bg-rose-600 border-rose-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-500'}`}
+                        className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border shadow-md flex items-center justify-center gap-2 ${promptType === 'video' ? 'bg-rose-600 border-rose-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-500'}`}
                     >
-                        <VideoCameraIcon className="h-5 w-5 mb-1" />
-                        <span>Prompt Video<br/><span className="text-[10px] font-medium opacity-80">(Veo/Sora)</span></span>
+                        <span>Prompt Video <span className="font-medium opacity-80 font-normal ml-1">(Veo/Sora)</span></span>
                     </button>
                 </div>
                 
@@ -201,26 +199,28 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                         Chỉ định khuôn hình trong prompt output
                     </label>
                 </div>
-                <div className={`flex gap-2 transition-opacity duration-300 mb-4 ${enableAspectRatio ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-                    <button
-                        onClick={() => setAspectRatio('16:9')}
-                        className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all border ${aspectRatio === '16:9' ? 'bg-slate-700 border-emerald-500 text-emerald-400 shadow-sm' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'}`}
-                    >
-                        16:9 (Ngang)
-                    </button>
-                     <button
-                        onClick={() => setAspectRatio('9:16')}
-                        className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all border ${aspectRatio === '9:16' ? 'bg-slate-700 border-emerald-500 text-emerald-400 shadow-sm' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'}`}
-                    >
-                        9:16 (Dọc)
-                    </button>
-                     <button
-                        onClick={() => setAspectRatio('1:1')}
-                        className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all border ${aspectRatio === '1:1' ? 'bg-slate-700 border-emerald-500 text-emerald-400 shadow-sm' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'}`}
-                    >
-                        1:1 (Vuông)
-                    </button>
-                </div>
+                {enableAspectRatio && (
+                    <div className="flex gap-2 mb-4 animate-fade-in">
+                        <button
+                            onClick={() => setAspectRatio('16:9')}
+                            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all border ${aspectRatio === '16:9' ? 'bg-slate-700 border-emerald-500 text-emerald-400 shadow-sm' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'}`}
+                        >
+                            16:9 (Ngang)
+                        </button>
+                        <button
+                            onClick={() => setAspectRatio('9:16')}
+                            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all border ${aspectRatio === '9:16' ? 'bg-slate-700 border-emerald-500 text-emerald-400 shadow-sm' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'}`}
+                        >
+                            9:16 (Dọc)
+                        </button>
+                        <button
+                            onClick={() => setAspectRatio('1:1')}
+                            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all border ${aspectRatio === '1:1' ? 'bg-slate-700 border-emerald-500 text-emerald-400 shadow-sm' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'}`}
+                        >
+                            1:1 (Vuông)
+                        </button>
+                    </div>
+                )}
 
                 <div className="flex flex-col mb-2">
                     <div className="flex items-center gap-2">
