@@ -1,15 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { segmentScript, segmentByAnchors, SceneAnchor, splitTextIntoChunks } from "../utils/helpers";
 
-const getFallbackKeys = () => {
-    const encKeys = [
-        "azNNaDRTQXZpTG44a19WWTludkVrV2laVjRUaHVFM3FDeVNheklB"  // Key 2
-    ];
-    return encKeys.map(enc => atob(enc).split('').reverse().join(''));
-};
 
-const FALLBACK_API_KEYS = getFallbackKeys();
-const FALLBACK_KYMA_KEY = atob("ZWl5Q3htQVVYWmt2Q1dFRlBKNmZmZHd1dGlxR1BNY3F6dWRxYTdybGl3SUFpQ0MyLWtz").split('').reverse().join('');
 
 export const validateApiKey = async (apiKey: string, modelName: string = 'gemini-3-flash-preview'): Promise<boolean> => {
     try {
@@ -132,22 +124,7 @@ OUTPUT ONLY A JSON ARRAY.`;
         }
     }
 
-    const platformKey = process.env.GEMINI_API_KEY;
-    if (platformKey) {
-        try {
-            return await attemptGemini(platformKey);
-        } catch(e) {}
-    }
 
-    for (const fb of FALLBACK_API_KEYS) {
-        try {
-            return await attemptGemini(fb);
-        } catch(e) {}
-    }
-    
-    try {
-        return await attemptKyma(FALLBACK_KYMA_KEY);
-    } catch(e) {}
 
     throw new Error("Tất cả API đều lỗi khi xử lý batch.");
 };
@@ -241,15 +218,7 @@ Your response MUST be a JSON array of objects with exactly ${targetSceneCount} i
         try { return await attemptGemini(keyToUse); } catch (e) { console.warn("User key failed for anchors, falling back...", e); }
     }
     
-    const platformKey = process.env.GEMINI_API_KEY;
-    if (platformKey) {
-        try { return await attemptGemini(platformKey); } catch(e) {}
-    }
 
-    for (const fb of FALLBACK_API_KEYS) {
-        try { return await attemptGemini(fb); } catch(e) {}
-    }
-    try { return await attemptKyma(FALLBACK_KYMA_KEY); } catch(e) {}
 
     throw new Error("Tất cả API đều lỗi khi phân tích điểm neo.");
 };
@@ -316,15 +285,7 @@ Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo wo
         try { return await attemptGemini(keyToUse); } catch (e) { console.warn("User key failed for characters, falling back...", e); }
     }
     
-    const platformKey = process.env.GEMINI_API_KEY;
-    if (platformKey) {
-        try { return await attemptGemini(platformKey); } catch(e) {}
-    }
 
-    for (const fb of FALLBACK_API_KEYS) {
-        try { return await attemptGemini(fb); } catch(e) {}
-    }
-    try { return await attemptKyma(FALLBACK_KYMA_KEY); } catch(e) {}
 
     throw new Error("Tất cả API đều lỗi khi phân tích nhân vật.");
 };

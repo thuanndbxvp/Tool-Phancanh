@@ -174,6 +174,12 @@ const App: FC = () => {
                const randomIndex = Math.floor(Math.random() * activeKeys.length);
                effectiveKey = activeKeys[randomIndex].key;
            }
+           
+           if (!effectiveKey && !kymaKey) {
+               addToast('error', 'Chưa cấu hình API Key', 'Vui lòng nhấn nút API góc trên bên phải để nhập Kyma API Key hoặc Gemini API Key trước khi phân cảnh.');
+               setIsBuilding(false);
+               return;
+           }
           
           let refImagesForService: { base64: string; mimeType: string }[] = [];
           let activeStylePrompt = "";
