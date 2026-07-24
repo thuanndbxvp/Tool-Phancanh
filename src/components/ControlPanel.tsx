@@ -1,4 +1,4 @@
-import React, { FC, useRef, useMemo, useState } from 'react';
+import React, { FC, useRef, useMemo, useState, useEffect } from 'react';
 import { AppMode, PromptType, AspectRatio } from '../types';
 import { PRESET_STYLES } from '../utils/constants';
 import { calculateOptimalSceneCount } from '../utils/helpers';
@@ -50,6 +50,25 @@ export const ControlPanel: FC<ControlPanelProps> = ({
 }) => {
   const scriptFileRef = useRef<HTMLInputElement>(null);
   const [isCustomStyleExpanded, setIsCustomStyleExpanded] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+      let interval: NodeJS.Timeout;
+      if (isBuilding) {
+          interval = setInterval(() => {
+              setElapsedSeconds(prev => prev + 1);
+          }, 1000);
+      } else {
+          setElapsedSeconds(0);
+      }
+      return () => clearInterval(interval);
+  }, [isBuilding]);
+
+  const formatTime = (totalSeconds: number) => {
+      const m = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+      const s = (totalSeconds % 60).toString().padStart(2, '0');
+      return `${m}:${s}`;
+  };
   
   const optimalSceneCount = useMemo(() => calculateOptimalSceneCount(scenario), [scenario]);
   const scriptReady = useMemo(() => scenario.trim() !== "" || scriptFileName !== null, [scenario, scriptFileName]);
@@ -285,7 +304,7 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                     )}
                     <div className="relative z-10 flex items-center gap-2">
                         {isBuilding ? <SpinnerIcon className="animate-spin h-5 w-5" /> : hasPrompts ? <ArrowPathIcon className="h-5 w-5" /> : null}
-                        {isBuilding ? (buildStatus || 'AI đang phân tích...') : hasPrompts ? 'Tạo lại Storyboard Pro' : 'Tạo Storyboard Pro'}
+                        {isBuilding ? `${buildStatus || 'AI đang phân tích...'} (${formatTime(elapsedSeconds)})` : hasPrompts ? 'Tạo lại Storyboard Pro' : 'Tạo Storyboard Pro'}
                     </div>
                 </button>
                 {isBuilding && buildProgress > 0 && (

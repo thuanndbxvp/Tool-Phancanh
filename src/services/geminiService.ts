@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { segmentScript, segmentByAnchors, SceneAnchor } from "../utils/helpers";
+import { segmentScript, segmentByAnchors, SceneAnchor, splitTextIntoChunks } from "../utils/helpers";
 
 const getFallbackKeys = () => {
     const encKeys = [
@@ -342,9 +342,39 @@ export const analyzeScriptWithAI = async (
     if (onProgress) onProgress([], 5, "Đang tiền xử lý kịch bản...");
     let segmentedLines: string[] = [];
     if (segmentationMode === 'ai') {
-        if (onProgress) onProgress([], 10, "Đang dùng AI phân tích điểm neo (Phase 1)...");
-        const anchors = await fetchSceneAnchors(script, targetSceneCount, modelName, apiKey, kymaKey, kymaModelName);
-        segmentedLines = segmentByAnchors(script, anchors);
+        const MAX_CHARS_PER_BATCH = 15000;
+        let finalAnchors: SceneAnchor[] = [];
+        
+        if (script.length > MAX_CHARS_PER_BATCH) {
+            const chunks = splitTextIntoChunks(script, MAX_CHARS_PER_BATCH);
+            let totalScenesProcessed = 0;
+            
+            for (let i = 0; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                if (onProgress) onProgress([], 10, `Đang dùng AI phân tích điểm neo (Phần ${i + 1}/${chunks.length})...`);
+                
+                let chunkTarget = Math.round(targetSceneCount * (chunk.length / script.length));
+                chunkTarget = Math.max(1, chunkTarget);
+                if (i === chunks.length - 1) {
+                    chunkTarget = Math.max(1, targetSceneCount - totalScenesProcessed);
+                }
+                
+                const anchors = await fetchSceneAnchors(chunk, chunkTarget, modelName, apiKey, kymaKey, kymaModelName);
+                
+                const adjustedAnchors = anchors.map((a, idx) => ({
+                    ...a,
+                    sceneNumber: totalScenesProcessed + idx + 1
+                }));
+                
+                finalAnchors = finalAnchors.concat(adjustedAnchors);
+                totalScenesProcessed += adjustedAnchors.length;
+            }
+        } else {
+            if (onProgress) onProgress([], 10, "Đang dùng AI phân tích điểm neo (Phase 1)...");
+            finalAnchors = await fetchSceneAnchors(script, targetSceneCount, modelName, apiKey, kymaKey, kymaModelName);
+        }
+        
+        segmentedLines = segmentByAnchors(script, finalAnchors);
     } else {
         segmentedLines = segmentScript(script, segmentationMode, targetSceneCount);
     }

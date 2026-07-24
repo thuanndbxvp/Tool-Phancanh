@@ -212,6 +212,22 @@ const findFuzzyIndex = (text: string, anchor: string, startIndex: number = 0): n
     return -1;
 };
 
+export const splitTextIntoChunks = (text: string, maxLen: number): string[] => {
+    const chunks: string[] = [];
+    let remaining = text;
+    while (remaining.length > maxLen) {
+        let splitIdx = remaining.lastIndexOf('\n\n', maxLen);
+        if (splitIdx === -1) splitIdx = remaining.lastIndexOf('\n', maxLen);
+        if (splitIdx === -1) splitIdx = remaining.lastIndexOf('. ', maxLen);
+        if (splitIdx === -1) splitIdx = maxLen; // fallback
+        
+        chunks.push(remaining.slice(0, splitIdx).trim());
+        remaining = remaining.slice(splitIdx).trim();
+    }
+    if (remaining.length > 0) chunks.push(remaining);
+    return chunks;
+};
+
 export const segmentByAnchors = (script: string, anchors: SceneAnchor[]): string[] => {
     if (!anchors || anchors.length === 0) return [script];
     
