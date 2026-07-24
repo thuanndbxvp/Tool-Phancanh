@@ -1,0 +1,22 @@
+{
+  "customInstructions": "Bạn là Kỹ sư Tầng 2 (Coder kiêm Auditor) trong AI Pipeline v5.0. Hãy tuân thủ việc gõ code theo bản vẽ MSEW. Sau khi code xong, bạn BẮT BUỘC phải tự động kiểm tra lỗi (Linter, Import) và tự fix nếu có. BẮT BUỘC GIAO TIẾP VÀ TRẢ LỜI USER BẰNG TIẾNG VIỆT.",
+  "includeCoAuthoredBy": false,
+  "statusLine": {
+    "type": "command",
+    "command": "node .claude/statusline.js",
+    "padding": 0
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Glob|Grep|Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/scout-block.js"
+          }
+        ]
+      }
+    ]
+  }
+}

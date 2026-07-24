@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile \"d:/Sync 3.5_BatchCapcut/app/ui/main_window/mixins/processing_mixin.py\" \"d:/Sync 3.5_BatchCapcut/app/ui/main_window/mixins/file_input_mixin.py\" \"d:/Sync 3.5_BatchCapcut/app/ui/main_window/mixins/settings_mixin.py\" \"d:/Sync 3.5_BatchCapcut/app/ui/main_window/dialogs/waveform_correction_dialog.py\" \"d:/Sync 3.5_BatchCapcut/app/ui/main_window/tabs/batch_sync_capcut_tab.py\" \"d:/Sync 3.5_BatchCapcut/app/ui/main_window/workers/batch_sync_capcut_worker.py\" \"d:/Sync 3.5_BatchCapcut/app/features/capcut_export/infrastructure/pycapcut_adapter.py\" \"d:/Sync 3.5_BatchCapcut/app/features/capcut_export/application/models.py\" \"d:/Sync 3.5_BatchCapcut/app/features/capcut_export/application/capcut_export_service.py\" \"d:/Sync 3.5_BatchCapcut/gui_app_pyside6.py\")",
+      "Bash(python \"d:/Sync 3.5_BatchCapcut/main_secure.py\" --smoke-test)",
+      "Bash(python -m py_compile \"d:/Sync 3.5_BatchCapcut/gui_app_pyside6.py\" \"d:/Sync 3.5_BatchCapcut/app/ui/main_window/mixins/processing_mixin.py\")",
+      "Bash(python -m py_compile \"d:/Sync 3.5_BatchCapcut/app/ui/main_window/mixins/processing_mixin.py\")",
+      "Bash(python -m py_compile \"d:/Sync 3.5_BatchCapcut/app/features/rendering/application/render_service.py\")",
+      "Bash(python -m py_compile \"d:/Sync 3.5_BatchCapcut/gui_app_pyside6.py\" \"d:/Sync 3.5_BatchCapcut/app/ui/main_window/mixins/processing_mixin.py\" \"d:/Sync 3.5_BatchCapcut/app/ui/main_window/mixins/file_input_mixin.py\")",
+      "Bash(python -c \"from src.license_client_secure import set_license_mode,test_connection; set_license_mode\\('full'\\); print\\('FULL', test_connection\\(\\)\\); set_license_mode\\('trial'\\); print\\('TRIAL', test_connection\\(\\)\\)\")",
+      "Bash(python -m py_compile \"d:/Sync 3.5_BatchCapcut/src/license_client_secure.py\")",
+      "Bash(python -)"
+    ]
+  }
+}

@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { segmentScript, segmentByAnchors, SceneAnchor, splitTextIntoChunks } from "../utils/helpers";
+import { tokenizeSentences, segmentByWaterFilling, segmentByIndex, Sentence } from "../utils/textSegmentation";
+import { Cache } from "../utils/cache";
 
 
 
@@ -18,6 +19,19 @@ export const validateApiKey = async (apiKey: string, modelName: string = 'gemini
 };
 
 const BATCH_SIZE = 5;
+
+const withRetry = async <T>(fn: () => Promise<T>, retries: number = 2, delayMs: number = 2000): Promise<T> => {
+    for (let r = 0; r <= retries; r++) {
+        try {
+            return await fn();
+        } catch (e) {
+            if (r === retries) throw e;
+            await new Promise(res => setTimeout(res, delayMs * (r + 1)));
+            console.warn(`Retry ${r+1}/${retries} after error:`, e);
+        }
+    }
+    throw new Error("Unreachable");
+};
 
 // Batched AI generation to avoid token limits and skipped text
 const generateBatch = async (
@@ -93,7 +107,8 @@ OUTPUT ONLY A JSON ARRAY.`;
                     { role: 'system', content: batchSystemInstruction },
                     { role: 'user', content: `Generate prompts for these lines:\n${batchInput}` }
                 ],
-                temperature: 0.7
+                temperature: 0.7,
+                max_tokens: 8000
             })
         });
         if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
@@ -110,7 +125,7 @@ OUTPUT ONLY A JSON ARRAY.`;
 
     if (kymaKey) {
         try {
-            return await attemptKyma(kymaKey);
+            return await withRetry(() => attemptKyma(kymaKey));
         } catch (e) {
             console.warn("Kyma failed for batch, falling back...", e);
         }
@@ -118,7 +133,7 @@ OUTPUT ONLY A JSON ARRAY.`;
 
     if (keyToUse) {
         try {
-            return await attemptGemini(keyToUse);
+            return await withRetry(() => attemptGemini(keyToUse));
         } catch (e) {
             console.warn("User key failed for batch, falling back...", e);
         }
@@ -130,41 +145,35 @@ OUTPUT ONLY A JSON ARRAY.`;
 };
 
 const fetchSceneAnchors = async (
-    script: string,
+    sentences: Sentence[],
     targetSceneCount: number,
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
     kymaModelName: string = "deepseek-v4-flash"
-): Promise<SceneAnchor[]> => {
-    const wordCount = script.trim().split(/\s+/).length;
-    const avgWords = Math.max(1, Math.round(wordCount / targetSceneCount));
+): Promise<{ fromSentenceIdx: number, toSentenceIdx: number }[]> => {
+    const scriptText = sentences.map(s => `[${s.idx}] ${s.text}`).join('\n');
 
-    const systemInstruction = `You are a storyboard director. Divide the provided script into EXACTLY ${targetSceneCount} logical scenes. Ensure you generate all ${targetSceneCount} scenes.
-
-RULES FOR SCENE DIVISION:
-1. EQUALITY: Divide the script into scenes of roughly EQUAL length. The average length should be around ${avgWords} words per scene. Do not make some scenes very short (1 sentence) and others very long.
-2. LOGICAL BOUNDARIES: Always cut scenes at natural sentence boundaries like periods (.), exclamation marks (!), or question marks (?). DO NOT cut in the middle of a sentence (e.g. at a comma) unless the sentence is extremely long.
-3. NARRATIVE FLOW: Group related ideas and actions into the same scene.
-
-DO NOT rewrite the script. For each scene, return ONLY:
-1. "sceneNumber": The scene number.
-2. "startAnchor": The FIRST 5-7 words of the scene EXACTLY as they appear in the script.
-3. "endAnchor": The LAST 5-7 words of the scene EXACTLY as they appear in the script.
-
-Your response MUST be a JSON array of objects with exactly ${targetSceneCount} items.`;
+    const systemInstruction = `You are a storyboard director. Divide the script into EXACTLY ${targetSceneCount} logical scenes.
+The script is provided as a numbered list of sentences: [0] "...", [1] "...".
+Return ONLY a JSON array of exactly ${targetSceneCount} objects:
+{
+  "sceneNumber": 1,
+  "fromSentenceIdx": 0,
+  "toSentenceIdx": 5
+}`;
 
     const schemaProperties: any = {
         sceneNumber: { type: Type.INTEGER },
-        startAnchor: { type: Type.STRING },
-        endAnchor: { type: Type.STRING },
+        fromSentenceIdx: { type: Type.INTEGER },
+        toSentenceIdx: { type: Type.INTEGER },
     };
-    
+
     const attemptGemini = async (key: string) => {
         const ai = new GoogleGenAI({ apiKey: key });
         const response = await ai.models.generateContent({
             model: modelName,
-            contents: `Script to divide into ${targetSceneCount} scenes:\n\n${script}`,
+            contents: `Script:\n\n${scriptText}`,
             config: {
                 systemInstruction: systemInstruction,
                 responseMimeType: "application/json",
@@ -173,7 +182,7 @@ Your response MUST be a JSON array of objects with exactly ${targetSceneCount} i
                     items: {
                         type: Type.OBJECT,
                         properties: schemaProperties,
-                        required: ["sceneNumber", "startAnchor", "endAnchor"]
+                        required: ["sceneNumber", "fromSentenceIdx", "toSentenceIdx"]
                     }
                 }
             }
@@ -194,9 +203,10 @@ Your response MUST be a JSON array of objects with exactly ${targetSceneCount} i
                 model: kymaModelName,
                 messages: [
                     { role: 'system', content: systemInstruction },
-                    { role: 'user', content: `Script to divide into ${targetSceneCount} scenes:\n\n${script}` }
+                    { role: 'user', content: `Script:\n\n${scriptText}` }
                 ],
-                temperature: 0.2
+                temperature: 0.2,
+                max_tokens: 8000
             })
         });
         if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
@@ -212,15 +222,15 @@ Your response MUST be a JSON array of objects with exactly ${targetSceneCount} i
     };
 
     if (kymaKey) {
-        try { return await attemptKyma(kymaKey); } catch (e) { console.warn("Kyma failed for anchors, falling back...", e); }
+        try { return await withRetry(() => attemptKyma(kymaKey)); } catch (e) { console.warn("Kyma failed for anchors, falling back...", e); }
     }
     if (keyToUse) {
-        try { return await attemptGemini(keyToUse); } catch (e) { console.warn("User key failed for anchors, falling back...", e); }
+        try { return await withRetry(() => attemptGemini(keyToUse)); } catch (e) { console.warn("User key failed for anchors, falling back...", e); }
     }
-    
 
 
-    throw new Error("Tất cả API đều lỗi khi phân tích điểm neo.");
+
+    throw new Error("Lỗi phân tích điểm neo (Anchors).");
 };
 
 const fetchCharacterDictionary = async (
@@ -230,7 +240,10 @@ const fetchCharacterDictionary = async (
     kymaKey?: string,
     kymaModelName: string = "deepseek-v4-flash"
 ): Promise<string> => {
-    const systemInstruction = `You are a script analyst. Read the script and identify the main characters. 
+    const cached = Cache.getCharacters(script, kymaKey ? kymaModelName : modelName);
+    if (cached) return cached;
+
+    const systemInstruction = `You are a script analyst. Read the script and identify the main characters.
 For each character, write a concise 1-sentence visual description (age, gender, hair, clothing, key features) that fits the story.
 Return a JSON object where the key is the character's name and the value is their visual description.
 Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo woman, long blonde hair, red dress"}`;
@@ -263,7 +276,8 @@ Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo wo
                     { role: 'system', content: systemInstruction },
                     { role: 'user', content: `Script:\n\n${script}` }
                 ],
-                temperature: 0.3
+                temperature: 0.3,
+                max_tokens: 8000
             })
         });
         if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
@@ -278,16 +292,18 @@ Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo wo
         return text;
     };
 
+    let result: string | null = null;
     if (kymaKey) {
-        try { return await attemptKyma(kymaKey); } catch (e) { console.warn("Kyma failed for characters, falling back...", e); }
+        try { result = await withRetry(() => attemptKyma(kymaKey)); } catch (e) { console.warn("Kyma failed for characters, falling back...", e); }
     }
-    if (keyToUse) {
-        try { return await attemptGemini(keyToUse); } catch (e) { console.warn("User key failed for characters, falling back...", e); }
+    if (!result && keyToUse) {
+        try { result = await withRetry(() => attemptGemini(keyToUse)); } catch (e) { console.warn("User key failed for characters, falling back...", e); }
     }
-    
 
+    if (!result) throw new Error("Tất cả API đều lỗi khi phân tích nhân vật.");
 
-    throw new Error("Tất cả API đều lỗi khi phân tích nhân vật.");
+    Cache.setCharacters(script, kymaKey ? kymaModelName : modelName, result);
+    return result;
 };
 
 export const analyzeScriptWithAI = async (
@@ -307,48 +323,37 @@ export const analyzeScriptWithAI = async (
     kymaModelName: string = "gpt-4o-mini",
     onProgress?: (scenes: any[], progress: number, statusText: string) => void
 ): Promise<{ scenes: any[], provider: string, model: string }> => {
-    
-    // 1. PRE-SEGMENTATION IN JS (Fixes Bug 1 & Bug 2)
+    const usedProvider = kymaKey ? "Kyma" : (apiKey ? "Gemini (User Key)" : "System Default");
+    const usedModel = kymaKey ? kymaModelName : modelName;
+
+    // 1. PRE-SEGMENTATION (Tokenize + AI/Water-fill)
     if (onProgress) onProgress([], 5, "Đang tiền xử lý kịch bản...");
+    const sentences = tokenizeSentences(script);
     let segmentedLines: string[] = [];
-    if (segmentationMode === 'ai') {
-        const MAX_CHARS_PER_BATCH = 15000;
-        let finalAnchors: SceneAnchor[] = [];
-        
-        if (script.length > MAX_CHARS_PER_BATCH) {
-            const chunks = splitTextIntoChunks(script, MAX_CHARS_PER_BATCH);
-            let totalScenesProcessed = 0;
-            
-            for (let i = 0; i < chunks.length; i++) {
-                const chunk = chunks[i];
-                if (onProgress) onProgress([], 10, `Đang dùng AI phân tích điểm neo (Phần ${i + 1}/${chunks.length})...`);
-                
-                let chunkTarget = Math.round(targetSceneCount * (chunk.length / script.length));
-                chunkTarget = Math.max(1, chunkTarget);
-                if (i === chunks.length - 1) {
-                    chunkTarget = Math.max(1, targetSceneCount - totalScenesProcessed);
-                }
-                
-                const anchors = await fetchSceneAnchors(chunk, chunkTarget, modelName, apiKey, kymaKey, kymaModelName);
-                
-                const adjustedAnchors = anchors.map((a, idx) => ({
-                    ...a,
-                    sceneNumber: totalScenesProcessed + idx + 1
-                }));
-                
-                finalAnchors = finalAnchors.concat(adjustedAnchors);
-                totalScenesProcessed += adjustedAnchors.length;
-            }
-        } else {
-            if (onProgress) onProgress([], 10, "Đang dùng AI phân tích điểm neo (Phase 1)...");
-            finalAnchors = await fetchSceneAnchors(script, targetSceneCount, modelName, apiKey, kymaKey, kymaModelName);
-        }
-        
-        segmentedLines = segmentByAnchors(script, finalAnchors);
-    } else {
-        segmentedLines = segmentScript(script, segmentationMode, targetSceneCount);
+
+    if (sentences.length === 0) {
+        throw new Error("Kịch bản trống hoặc không thể phân mảnh.");
     }
-    
+
+    if (segmentationMode === 'ai') {
+        if (onProgress) onProgress([], 5, "Đang dùng AI phân tích điểm neo...");
+        const anchors = await fetchSceneAnchors(sentences, targetSceneCount, modelName, apiKey, kymaKey, kymaModelName);
+        segmentedLines = segmentByIndex(sentences, anchors);
+
+        // Validation: Nếu AI trả thiếu số lượng, fallback tự băm bằng Water-filling phần còn thiếu.
+        if (segmentedLines.length < targetSceneCount) {
+            console.warn(`AI trả thiếu cảnh (${segmentedLines.length}/${targetSceneCount}), đang fallback bù bằng water-filling...`);
+            const missing = targetSceneCount - segmentedLines.length;
+            const remainingSentences = sentences.slice(Math.floor(sentences.length * 0.8));
+            const fillScenes = segmentByWaterFilling(remainingSentences, missing);
+            segmentedLines = segmentedLines.concat(fillScenes);
+        }
+    } else if (segmentationMode === 'punctuation') {
+        segmentedLines = sentences.map(s => s.text);
+    } else {
+        segmentedLines = segmentByWaterFilling(sentences, targetSceneCount);
+    }
+
     if (segmentedLines.length === 0) {
         throw new Error("Kịch bản trống hoặc không thể phân mảnh.");
     }
@@ -400,52 +405,56 @@ ${commonStyleInjection}${aspectRatioInstruction}${characterDictionaryStr}
    - **ATMOSPHERE**: Describe how light interacts with motion.`;
     }
 
-    // 3. BATCH PROCESSING
-    let finalScenes: any[] = [];
-    
-    // We determine the provider just by checking what key was passed, but the actual provider is resolved per batch.
-    // We'll just assume the first successful batch provider is the provider for all.
-    let usedProvider = kymaKey ? "Kyma" : (apiKey ? "Gemini (User Key)" : "System Default");
-    let usedModel = kymaKey ? kymaModelName : modelName;
-
+    // 3. BATCH PROCESSING (Parallel with Concurrency Limit)
+    const batches: string[][] = [];
     for (let i = 0; i < segmentedLines.length; i += BATCH_SIZE) {
-        const batch = segmentedLines.slice(i, i + BATCH_SIZE);
-        const batchResults = await generateBatch(
-            batch, 
-            "", // System instruction is built in generateBatch
-            promptGenerationInstruction, 
-            modelName, 
-            apiKey, 
-            kymaKey, 
-            kymaModelName
-        );
-        
-        // Sometimes AI returns fewer or more items despite instructions. 
-        // We will map strictly by aligning array indexes if sizes mismatch, but ideally they match.
-        for (let j = 0; j < batch.length; j++) {
-            const aiResult = batchResults[j] || {};
-            
-            // Forcefully prepend the style using JS
-            const rawImagePrompt = aiResult.imagePrompt || "";
-            const rawVideoPrompt = aiResult.videoPrompt || "";
-            
-            const finalImagePrompt = (styleLock && rawImagePrompt) ? `${styleLock}, ${rawImagePrompt}` : rawImagePrompt;
-            const finalVideoPrompt = (styleLock && rawVideoPrompt) ? `${styleLock}, ${rawVideoPrompt}` : rawVideoPrompt;
-
-            finalScenes.push({
-                scriptLine: batch[j], // guarantee original script text
-                imagePrompt: finalImagePrompt,
-                videoPrompt: finalVideoPrompt
-            });
-        }
-        
-        if (onProgress) {
-            // progress ranges from 10% (after Phase 1) to 100%
-            const startProgress = segmentationMode === 'ai' ? 10 : 5;
-            const batchProgress = Math.floor(((finalScenes.length / segmentedLines.length) * (100 - startProgress)) + startProgress);
-            onProgress([...finalScenes], batchProgress, `Đang sinh prompt (${finalScenes.length}/${segmentedLines.length} cảnh)...`);
-        }
+        batches.push(segmentedLines.slice(i, i + BATCH_SIZE));
     }
 
-    return { scenes: finalScenes, provider: usedProvider, model: usedModel };
+    const MAX_CONCURRENCY = 3;
+    let finalScenes: any[] = new Array(segmentedLines.length);
+    let completedScenesCount = 0;
+
+    const runBatch = async (batchIdx: number) => {
+        const batch = batches[batchIdx];
+        const batchResults = await generateBatch(
+            batch,
+            "", // System instruction is built in generateBatch
+            promptGenerationInstruction,
+            modelName,
+            apiKey,
+            kymaKey,
+            kymaModelName
+        );
+
+        for (let j = 0; j < batch.length; j++) {
+            const aiResult = batchResults[j] || {};
+            const rawImagePrompt = aiResult.imagePrompt || "";
+            const rawVideoPrompt = aiResult.videoPrompt || "";
+
+            finalScenes[batchIdx * BATCH_SIZE + j] = {
+                scriptLine: batch[j],
+                imagePrompt: (styleLock && rawImagePrompt) ? `${styleLock}, ${rawImagePrompt}` : rawImagePrompt,
+                videoPrompt: (styleLock && rawVideoPrompt) ? `${styleLock}, ${rawVideoPrompt}` : rawVideoPrompt
+            };
+        }
+
+        completedScenesCount += batch.length;
+        if (onProgress) {
+            const progress = Math.floor(((completedScenesCount / segmentedLines.length) * 85) + 15);
+            onProgress([...finalScenes.filter(Boolean)], progress, `Đang sinh prompt (${completedScenesCount}/${segmentedLines.length} cảnh)...`);
+        }
+    };
+
+    const executing = new Set<Promise<void>>();
+    for (let i = 0; i < batches.length; i++) {
+        const p = runBatch(i).finally(() => executing.delete(p));
+        executing.add(p);
+        if (executing.size >= MAX_CONCURRENCY) {
+            await Promise.race(executing);
+        }
+    }
+    await Promise.all(executing);
+
+    return { scenes: finalScenes.filter(Boolean), provider: usedProvider, model: usedModel };
 };
