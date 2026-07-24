@@ -160,7 +160,16 @@ const fetchSceneAnchors = async (
     kymaKey?: string,
     kymaModelName: string = "deepseek-v4-flash"
 ): Promise<SceneAnchor[]> => {
+    const wordCount = script.trim().split(/\s+/).length;
+    const avgWords = Math.max(1, Math.round(wordCount / targetSceneCount));
+
     const systemInstruction = `You are a storyboard director. Divide the provided script into EXACTLY ${targetSceneCount} logical scenes. Ensure you generate all ${targetSceneCount} scenes.
+
+RULES FOR SCENE DIVISION:
+1. EQUALITY: Divide the script into scenes of roughly EQUAL length. The average length should be around ${avgWords} words per scene. Do not make some scenes very short (1 sentence) and others very long.
+2. LOGICAL BOUNDARIES: Always cut scenes at natural sentence boundaries like periods (.), exclamation marks (!), or question marks (?). DO NOT cut in the middle of a sentence (e.g. at a comma) unless the sentence is extremely long.
+3. NARRATIVE FLOW: Group related ideas and actions into the same scene.
+
 DO NOT rewrite the script. For each scene, return ONLY:
 1. "sceneNumber": The scene number.
 2. "startAnchor": The FIRST 5-7 words of the scene EXACTLY as they appear in the script.
