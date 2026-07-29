@@ -120,7 +120,14 @@ OUTPUT ONLY A JSON ARRAY.`;
         });
         const text = response.text;
         if (!text) throw new Error("AI không phản hồi.");
-        return JSON.parse(text.trim());
+        try {
+            return JSON.parse(text.trim());
+        } catch (e) {
+            console.warn("JSON parse failed for batch Gemini, attempting best-effort salvage...");
+            const salvaged = bestEffortParse(text);
+            if (salvaged.length > 0) return salvaged;
+            throw e;
+        }
     };
 
     const attemptKyma = async (key: string) => {
@@ -338,7 +345,14 @@ Example for ${targetSceneCount} scenes:
         });
         const text = response.text;
         if (!text) throw new Error("AI không phản hồi.");
-        return JSON.parse(text.trim());
+        try {
+            return JSON.parse(text.trim());
+        } catch (e) {
+            console.warn("JSON parse failed for scene anchors Gemini, attempting best-effort salvage...");
+            const salvaged = bestEffortParse(text);
+            if (salvaged.length > 0) return salvaged;
+            throw e;
+        }
     };
 
     const attemptKyma = async (key: string) => {
@@ -367,7 +381,14 @@ Example for ${targetSceneCount} scenes:
         } else {
             text = text.replace(/```json/g, '').replace(/```/g, '').trim();
         }
-        return JSON.parse(text);
+        try {
+            return JSON.parse(text);
+        } catch (e) {
+            console.warn("JSON parse failed for scene anchors Kyma, attempting best-effort salvage...");
+            const salvaged = bestEffortParse(text);
+            if (salvaged.length > 0) return salvaged;
+            throw e;
+        }
     };
 
     if (kymaKey) {
