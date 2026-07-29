@@ -58,16 +58,16 @@ export const segmentByWaterFilling = (sentences: Sentence[], targetSceneCount: n
     // Fallback: Tránh trường hợp tạo ra quá ít cảnh so với yêu cầu (vd 5 câu, target 20 cảnh)
     if (scenes.length < targetSceneCount && sentences.length >= targetSceneCount) {
         const fallbackScenes: string[] = [];
-        const sentencesPerScene = Math.max(1, Math.floor(sentences.length / targetSceneCount));
-        for (let i = 0; i < sentences.length; i += sentencesPerScene) {
-            fallbackScenes.push(sentences.slice(i, i + sentencesPerScene).map(s => s.text).join(' '));
-        }
-        // Ép số lượng cảnh bằng đúng target (gộp cuối nếu dư)
-        while (fallbackScenes.length > targetSceneCount) {
-            const last = fallbackScenes.pop();
-            if (last && fallbackScenes.length > 0) {
-                fallbackScenes[fallbackScenes.length - 1] += " " + last;
-            }
+        const base = Math.floor(sentences.length / targetSceneCount);
+        let remainder = sentences.length % targetSceneCount;
+        let currentIdx = 0;
+        
+        for (let i = 0; i < targetSceneCount; i++) {
+            const take = base + (remainder > 0 ? 1 : 0);
+            remainder--;
+            const chunk = sentences.slice(currentIdx, currentIdx + take).map(s => s.text).join(' ');
+            fallbackScenes.push(chunk);
+            currentIdx += take;
         }
         return fallbackScenes;
     }
@@ -86,7 +86,7 @@ export const segmentByIndex = (sentences: Sentence[], aiIndices: { fromSentenceI
         if (fromIdx > lastHandledIdx + 1) fromIdx = lastHandledIdx + 1;
         if (toIdx < fromIdx) toIdx = fromIdx;
         if (toIdx >= sentences.length) toIdx = sentences.length - 1;
-        if (i === aiIndices.length - 1) toIdx = sentences.length - 1;
+        // Bỏ việc ép toIdx của scene cuối cùng, để dành việc xử lý phần thừa cho logic bên dưới.
 
         const sceneTexts = sentences.slice(fromIdx, toIdx + 1).map(s => s.text);
         scenes.push(sceneTexts.join(' '));
@@ -95,9 +95,13 @@ export const segmentByIndex = (sentences: Sentence[], aiIndices: { fromSentenceI
 
     // Append any remaining sentences (gap handling)
     if (sentences.length > 0 && lastHandledIdx < sentences.length - 1 && scenes.length > 0) {
-        const remainder = sentences.slice(lastHandledIdx + 1).map(s => s.text).join(' ');
-        if (remainder) {
-            scenes[scenes.length - 1] = (scenes[scenes.length - 1] + ' ' + remainder).trim();
+        const unmapped = sentences.slice(lastHandledIdx + 1).map(s => s.text);
+        // Phân bổ đều các câu thừa vào các cảnh (round-robin từ cảnh cuối ngược lên) để tránh dồn cục
+        let sceneIdx = scenes.length - 1;
+        for (const text of unmapped) {
+            scenes[sceneIdx] = scenes[sceneIdx] + ' ' + text;
+            sceneIdx--;
+            if (sceneIdx < 0) sceneIdx = scenes.length - 1;
         }
     } else if (sentences.length > 0 && scenes.length === 0) {
         scenes.push(sentences.map(s => s.text).join(' '));
