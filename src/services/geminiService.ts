@@ -218,7 +218,10 @@ const generateBatchStream = async function* (
     kymaModelName: string = "deepseek-v4-flash"
 ): AsyncGenerator<{ index: number, scene: any }> {
     // Provider đơn nhất: nếu có Kyma → dùng Kyma, ngược lại → dùng Gemini.
-    // Kyma path: wrapper non-streaming rồi yield từng cái (Kyma API không support stream)
+    // Học từ auto-edit-video-main:
+    //   - Kyma path: synchronous call → parse 1 lần (auto-edit-video-main cũng làm vậy)
+    //   - Gemini path: synchronous call → parse 1 lần (BỎ streaming vì Gemini SDK streaming
+    //     gây chunk parse phức tạp, không đáng cho 5-10 scenes/batch)
     if (kymaKey) {
         const response = await fetch('https://kymaapi.com/v1/chat/completions', {
             method: 'POST',
@@ -242,22 +245,8 @@ const generateBatchStream = async function* (
         if (!content || typeof content !== 'string') {
             throw new Error("Kyma trả response rỗng hoặc không hợp lệ.");
         }
-        let text = content;
-        const match = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
-        if (match) {
-            text = match[0];
-        } else {
-            text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        }
-        if (!text) {
-            throw new Error("Kyma trả content rỗng sau khi strip markdown.");
-        }
-        let scenes: any[];
-        try {
-            scenes = JSON.parse(text);
-        } catch {
-            scenes = bestEffortParse(text);
-        }
+        // Dùng parseSceneArrayFromBuffer (robust, handle edge cases)
+        const scenes = parseSceneArrayFromBuffer(content, scenesBatch.length);
         if (scenes.length === 0) {
             throw new Error("Kyma trả về JSON không chứa scene hợp lệ.");
         }
@@ -267,7 +256,11 @@ const generateBatchStream = async function* (
         return;
     }
 
-    // Gemini streaming path
+    // NON-STREAMING Gemini path (học auto-edit-video-main strategies/prompt_service.py::_call_batch_async)
+    // Lý do bỏ streaming:
+    //   - Gemini SDK streaming trả chunks NHỎ → parser regex fail với string chứa "}"
+    //   - Yield progress từng scene phức tạp, không cần thiết cho 5 scenes/batch
+    //   - Synchronous call + parallel batches cho UI progress mượt hơn
     const schemaProperties: any = {
         scriptLine: { type: Type.STRING }
     };
@@ -281,22 +274,22 @@ const generateBatchStream = async function* (
     }
 
     const ai = new GoogleGenAI({ apiKey: keyToUse.split(',')[0].trim() });
-    // Retry the whole stream generation up to 3 times on transient errors
-    // (429 rate limit, 503 unavailable, 500 server, network timeout).
-    // Pattern học từ auto-edit-video-main/services/prompt_service.py
-    // (_call_batch_async: max_retries=4 với exponential backoff).
     const RETRYABLE_PATTERNS = ['429', '500', '503', 'unavailable', 'timeout', 'fetch failed', 'econnreset', 'rate limit'];
     const isRetryable = (e: any) => {
         const msg = String(e?.message || e || '').toLowerCase();
         return RETRYABLE_PATTERNS.some(p => msg.includes(p));
     };
 
-    const MAX_RETRIES = 3;
-    let stream: AsyncIterable<any> | null = null;
+    // Pattern học từ _call_batch_async:
+    //   - max_retries = 4
+    //   - exponential backoff: 2s, 4s, 6s, 8s
+    //   - Model fallback: 429/404 → đổi model tiếp theo trong chain
+    const MAX_RETRIES = 4;
     let lastError: any = null;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        const delayMs = 2000 * (attempt + 1);
         try {
-            stream = await ai.models.generateContentStream({
+            const response = await ai.models.generateContent({
                 model: modelName,
                 contents: `Generate prompts for these lines:\n${JSON.stringify(scenesBatch, null, 2)}`,
                 config: {
@@ -312,42 +305,29 @@ const generateBatchStream = async function* (
                     }
                 }
             });
-            break;
+            const text = response.text || '';
+            if (!text) {
+                throw new Error("Gemini trả response rỗng (text='').");
+            }
+            const scenes = parseSceneArrayFromBuffer(text, scenesBatch.length);
+            if (scenes.length === 0) {
+                throw new Error(`Gemini trả về JSON không chứa scene hợp lệ (text=${text.length} chars).`);
+            }
+            for (let i = 0; i < scenes.length; i++) {
+                yield { index: i, scene: scenes[i] };
+            }
+            return;
         } catch (e) {
             lastError = e;
-            if (!isRetryable(e) || attempt === MAX_RETRIES - 1) throw e;
-            // Exponential backoff: 2s, 4s, 8s
-            const delayMs = 2000 * Math.pow(2, attempt);
-            console.warn(`Batch stream attempt ${attempt + 1}/${MAX_RETRIES} failed (${(e as Error)?.message || e}); retrying in ${delayMs}ms...`);
+            if (!isRetryable(e) || attempt === MAX_RETRIES - 1) {
+                console.error(`Batch Gemini failed (sau ${attempt + 1} attempts):`, e);
+                throw e;
+            }
+            console.warn(`Batch Gemini attempt ${attempt + 1}/${MAX_RETRIES} failed (${(e as Error)?.message || e}); retrying in ${delayMs}ms...`);
             await new Promise(r => setTimeout(r, delayMs));
         }
     }
-    if (!stream) throw lastError || new Error("Stream init failed");
-
-    // Thu buffer toàn bộ → parse 1 lần khi stream done.
-    // Cách cũ (regex incremental) bị miss khi:
-    //   - String chứa } bên trong (vd: "with } inside")
-    //   - AI trả prefix text thay vì JSON thuần
-    //   - JSON bị cắt giữa chunk
-    // Cách mới: giống auto-edit-video-main/ai_prompts.py::_parse_array
-    //   - Bóc ```json wrapper nếu có
-    //   - Tìm [ ... ] trong text → JSON.parse
-    //   - Best-effort fallback: split line by line
-    let buffer = '';
-    for await (const chunk of stream) {
-        const chunkText = chunk.text || '';
-        buffer += chunkText;
-        // Yield progress mỗi chunk để UI biết stream còn sống
-        // (KHÔNG yield scene ở đây — sẽ yield khi parse xong)
-    }
-
-    // Sau stream done → parse buffer
-    const scenes = parseSceneArrayFromBuffer(buffer, scenesBatch.length);
-
-    let index = 0;
-    for (const scene of scenes) {
-        yield { index: index++, scene };
-    }
+    throw lastError || new Error("Batch failed after all retries");
 };
 
 /**
