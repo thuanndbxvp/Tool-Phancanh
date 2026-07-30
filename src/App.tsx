@@ -66,10 +66,15 @@ const App: FC = () => {
                 setKymaModels(models);
                 
                 const savedKymaModel = localStorage.getItem('sbgen_kyma_model');
+                const qwenModel = models.find((m: any) => 
+                    m.id.toLowerCase().includes('qwen-3.7-flash') || 
+                    (m.name && m.name.toLowerCase().includes('qwen 3.7 flash'))
+                );
+
                 if (savedKymaModel && models.some((m: any) => m.id === savedKymaModel)) {
                     setSelectedKymaModel(savedKymaModel);
-                } else if (models.some((m: any) => m.id === 'qwen-3.7-flash')) {
-                    setSelectedKymaModel('qwen-3.7-flash');
+                } else if (qwenModel) {
+                    setSelectedKymaModel(qwenModel.id);
                 } else if (models.length > 0) {
                     setSelectedKymaModel(models[0].id);
                 }
