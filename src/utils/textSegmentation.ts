@@ -174,3 +174,109 @@ export const ensureSceneCount = (
     console.warn(`Đã bù từ ${segmentedLines.length} → ${result.length} scenes bằng cách tách scene dài`);
     return result;
 };
+
+// ========== KHỐI 2 (hybrid-segmentation): TIMELINE-BASED SEGMENTATION ==========
+
+export interface TimelineBlock {
+    startTime: number;
+    endTime: number;
+    text: string;
+    isPunctuationEnd: boolean;
+}
+
+export const parseSrtToTimeline = (srtText: string): TimelineBlock[] => {
+    const blocks: TimelineBlock[] = [];
+    const chunks = srtText.trim().replace(/\r\n/g, '\n').split('\n\n');
+
+    for (const chunk of chunks) {
+        const lines = chunk.split('\n');
+        if (lines.length >= 3) {
+            const timeLine = lines[1];
+            const text = lines.slice(2).join(' ');
+            const timeMatch = timeLine.match(/(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/);
+
+            if (timeMatch) {
+                const startTime = parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseInt(timeMatch[3]) + parseInt(timeMatch[4]) / 1000;
+                const endTime = parseInt(timeMatch[5]) * 3600 + parseInt(timeMatch[6]) * 60 + parseInt(timeMatch[7]) + parseInt(timeMatch[8]) / 1000;
+                blocks.push({
+                    startTime,
+                    endTime,
+                    text,
+                    isPunctuationEnd: /[.?!]$/.test(text.trim())
+                });
+            }
+        }
+    }
+    return blocks;
+};
+
+export const parseTxtToSyntheticTimeline = (txt: string, audioDuration?: number): TimelineBlock[] => {
+    const sentences = tokenizeSentences(txt);
+    const totalWords = sentences.reduce((sum, s) => sum + s.wordCount, 0);
+    const wps = audioDuration ? (totalWords / audioDuration) : 3.5;
+
+    const blocks: TimelineBlock[] = [];
+    let currentTime = 0;
+
+    for (const sentence of sentences) {
+        const duration = sentence.wordCount / wps;
+        const endTime = currentTime + duration;
+
+        let delay = 0;
+        if (sentence.text.endsWith(',')) delay = 0.2;
+        else if (/[.?!]$/.test(sentence.text)) delay = 0.5;
+
+        blocks.push({
+            startTime: currentTime,
+            endTime: endTime,
+            text: sentence.text,
+            isPunctuationEnd: /[.?!]$/.test(sentence.text.trim())
+        });
+
+        currentTime = endTime + delay;
+    }
+
+    return blocks;
+};
+
+export const segmentByTimeline = (timeline: TimelineBlock[], targetSceneCount: number): string[] => {
+    if (timeline.length === 0) return [];
+    if (targetSceneCount <= 1) return [timeline.map(b => b.text).join(' ')];
+
+    const totalDuration = timeline[timeline.length - 1].endTime;
+    const targetSceneDuration = totalDuration / targetSceneCount;
+
+    const scenes: string[] = [];
+    let currentSceneText: string[] = [];
+    let currentSceneStart = timeline[0].startTime;
+
+    for (let i = 0; i < timeline.length; i++) {
+        const block = timeline[i];
+        currentSceneText.push(block.text);
+
+        const currentDuration = block.endTime - currentSceneStart;
+
+        if (currentDuration >= targetSceneDuration && scenes.length < targetSceneCount - 1) {
+            let shouldBreak = false;
+            if (block.isPunctuationEnd) {
+                shouldBreak = true;
+            } else if (currentDuration > targetSceneDuration + 4) {
+                shouldBreak = true;
+            }
+
+            if (shouldBreak) {
+                scenes.push(currentSceneText.join(' '));
+                currentSceneText = [];
+                if (i + 1 < timeline.length) {
+                    currentSceneStart = timeline[i + 1].startTime;
+                }
+            }
+        }
+    }
+
+    if (currentSceneText.length > 0) {
+        scenes.push(currentSceneText.join(' '));
+    }
+
+    return scenes;
+};

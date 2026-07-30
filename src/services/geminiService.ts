@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { tokenizeSentences, segmentByWaterFilling, segmentByIndex, Sentence, ensureSceneCount } from "../utils/textSegmentation";
+import { tokenizeSentences, segmentByWaterFilling, segmentByIndex, Sentence, ensureSceneCount, parseSrtToTimeline, parseTxtToSyntheticTimeline, segmentByTimeline, TimelineBlock } from "../utils/textSegmentation";
 import { Cache } from "../utils/cache";
 
 
@@ -941,4 +941,242 @@ ${commonStyleInjection}${aspectRatioInstruction}${characterDictionaryStr}
    - **CHARACTER & ACTION**: Describe fluid movements based on the script.
    - **ATMOSPHERE**: Describe how light interacts with motion.`;
     }
+};
+
+// ========== KHỐI 3 (hybrid-segmentation): HYBRID STREAM FUNCTION ==========
+
+export const analyzeScriptWithAIHybridStream = async function* (
+    script: string,
+    referenceImages: { base64: string; mimeType: string }[],
+    apiKey: string,
+    styleLock: string,
+    mode: string,
+    modelName: string = "gemini-2.5-flash",
+    targetSceneCount: number = 10,
+    promptType: 'image' | 'video' = 'image',
+    aspectRatio: string = '16:9',
+    enableAspectRatio: boolean = false,
+    enableCharacterConsistency: boolean = false,
+    kymaKey?: string,
+    kymaModelName: string = "gpt-4o-mini",
+    audioDuration?: number,
+    enhanceWithAI: boolean = false
+): AsyncGenerator<{ type: 'progress' | 'final', scenes?: any[], progress?: number, status?: string, provider?: string, model?: string, totalCount?: number }> {
+    let finalProvider = kymaKey ? "Kyma" : (apiKey ? "Gemini (User Key)" : "System Default");
+    let finalModel = kymaKey ? kymaModelName : modelName;
+
+    if (!kymaKey && !apiKey) {
+        throw new Error("Không có API key. Vui lòng cấu hình Kyma hoặc Gemini key trước khi phân cảnh.");
+    }
+
+    // 1. TIMELINE-BASED PRE-SEGMENTATION (SRT or TXT)
+    yield { type: 'progress', scenes: [], progress: 5, status: "Đang phân tích timeline kịch bản..." };
+
+    const isSrt = script.includes('-->') && (script.includes(',000') || script.includes('.000') || script.includes('\n1\n'));
+    let timelineBlocks: TimelineBlock[];
+    if (isSrt) {
+        timelineBlocks = parseSrtToTimeline(script);
+    } else {
+        timelineBlocks = parseTxtToSyntheticTimeline(script, audioDuration);
+    }
+
+    if (timelineBlocks.length === 0) {
+        throw new Error("Kịch bản trống hoặc không thể phân mảnh.");
+    }
+
+    let segmentedLines: string[] = segmentByTimeline(timelineBlocks, targetSceneCount);
+
+    // Optional AI Enhance: AI review lại boundaries cho semantic flow
+    if (enhanceWithAI && (kymaKey || apiKey)) {
+        try {
+            yield { type: 'progress', scenes: [], progress: 8, status: "Đang dùng AI nắn chỉnh ranh giới cảnh..." };
+            const scriptText = segmentedLines.map((line, i) => `[Scene ${i + 1}]: ${line}`).join('\n\n');
+            const systemInstruction = `You are a storyboard director. Review the script and adjust the scene boundaries for better semantic flow.
+You MUST return EXACTLY ${targetSceneCount} scenes. Do not change any text content, only move words/sentences between adjacent scenes if it improves the flow.
+Return ONLY a JSON array of strings, where each string is a scene.`;
+
+            let adjustedScenes: string[] = [];
+            if (kymaKey) {
+                const response = await fetch('https://kymaapi.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${kymaKey}` },
+                    body: JSON.stringify({
+                        model: kymaModelName,
+                        messages: [
+                            { role: 'system', content: systemInstruction },
+                            { role: 'user', content: scriptText }
+                        ],
+                        temperature: 0.1,
+                    })
+                });
+                const data = await response.json();
+                const text = data?.choices?.[0]?.message?.content || "[]";
+                const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
+                adjustedScenes = JSON.parse(cleanJson);
+            }
+
+            if (adjustedScenes.length === targetSceneCount) {
+                segmentedLines = adjustedScenes;
+            } else {
+                console.warn(`AI enhance returned ${adjustedScenes.length} scenes (expected ${targetSceneCount}). Using default timeline.`);
+            }
+        } catch (e) {
+            console.warn("AI enhance failed, using default timeline segment:", e);
+        }
+    }
+
+    // Safety net: đảm bảo đúng targetSceneCount
+    const sentences = tokenizeSentences(script);
+    if (segmentedLines.length < targetSceneCount && sentences.length > 0) {
+        segmentedLines = ensureSceneCount(segmentedLines, sentences, targetSceneCount);
+    }
+
+    if (segmentedLines.length === 0) {
+        throw new Error("Kịch bản trống hoặc không thể phân mảnh.");
+    }
+
+    // 1.5 CHARACTER DICTIONARY
+    let characterDictionaryStr = "";
+    if (enableCharacterConsistency) {
+        try {
+            yield { type: 'progress', scenes: [], progress: 14, status: "Đang phân tích tạo hình nhân vật (Casting)..." };
+            const charDict = await fetchCharacterDictionary(script, modelName, apiKey, kymaKey, kymaModelName);
+            if (!charDict) {
+                console.warn("Character dictionary rỗng, bỏ qua bước này.");
+            } else {
+                const parsedDict = JSON.parse(charDict);
+                let dictText = "";
+                for (const [char, desc] of Object.entries(parsedDict)) {
+                    dictText += `- ${char}: ${desc}\n`;
+                }
+                if (dictText) {
+                    characterDictionaryStr = `\n   - **CHARACTER CONSISTENCY MANDATE**: When any of the following characters appear in the scene, you MUST incorporate their EXACT visual description into your prompt to ensure consistency across all scenes:\n${dictText}`;
+                }
+            }
+        } catch (e) {
+            console.warn("Lỗi khi tạo hình nhân vật, bỏ qua bước này: ", e);
+        }
+    }
+
+    // 2. CONSTRUCT PROMPT INSTRUCTIONS
+    const promptGenerationInstruction = promptGenerationInstruction_for_stream(
+        promptType, styleLock, aspectRatio, enableAspectRatio, characterDictionaryStr
+    );
+
+    const batchSystemInstruction = `You are a professional storyboard artist and script analyst.
+Your task is to generate visual prompts for a list of PRE-SEGMENTED script lines.
+
+**CORE DIRECTIVE**
+You are given an array of "scriptLine" strings. For EACH string in the array, you must output exactly one JSON object. The number of items in your output array MUST EXACTLY MATCH the number of items in the input array.
+Do NOT modify, summarize, or skip ANY of the provided scriptLine texts. Copy them verbatim to your output.
+
+**TASK**
+For each input scriptLine, generate a JSON object with:
+1. "scriptLine": (VERBATIM from input)
+${promptGenerationInstruction}`;
+
+    // 3. STREAMING BATCH PROCESSING
+    const BATCH_SIZE = 6;
+    const batches: string[][] = [];
+    for (let i = 0; i < segmentedLines.length; i += BATCH_SIZE) {
+        batches.push(segmentedLines.slice(i, i + BATCH_SIZE));
+    }
+
+    const finalScenes: any[] = new Array(segmentedLines.length);
+    let completedCount = 0;
+
+    yield {
+        type: 'progress',
+        scenes: [],
+        progress: 15,
+        status: `Đang sinh prompt real-time (0/${segmentedLines.length} cảnh)...`
+    };
+
+    const generators: AsyncGenerator<{ index: number, scene: any }>[] = batches.map((batch, batchIdx) =>
+        generateBatchStream(
+            batch,
+            batchSystemInstruction,
+            promptGenerationInstruction,
+            modelName,
+            apiKey,
+            kymaKey,
+            kymaModelName
+        )
+    );
+
+    type ProgressEvent = { type: 'progress', scenes: any[], progress: number, status: string };
+
+    async function* consumeGenerator(batchIdx: number): AsyncGenerator<ProgressEvent> {
+        const gen = generators[batchIdx];
+        try {
+            for await (const { index, scene } of gen) {
+                const globalIdx = batchIdx * BATCH_SIZE + index;
+                finalScenes[globalIdx] = {
+                    scriptLine: segmentedLines[globalIdx],
+                    imagePrompt: (styleLock && scene.imagePrompt) ? `${styleLock}, ${scene.imagePrompt}` : (scene.imagePrompt || ""),
+                    videoPrompt: (styleLock && scene.videoPrompt) ? `${styleLock}, ${scene.videoPrompt}` : (scene.videoPrompt || "")
+                };
+                completedCount++;
+                yield {
+                    type: 'progress',
+                    scenes: [...finalScenes.filter(Boolean)],
+                    progress: Math.floor((completedCount / segmentedLines.length) * 85) + 15,
+                    status: `Đang sinh prompt real-time (${completedCount}/${segmentedLines.length} cảnh)...`
+                };
+            }
+        } catch (e) {
+            console.warn(`Batch ${batchIdx} failed:`, e);
+        }
+    }
+
+    async function* mergeGenerators() {
+        const pending: AsyncGenerator<ProgressEvent>[] = generators.map((_, i) => consumeGenerator(i));
+        const iters = pending.map(g => g[Symbol.asyncIterator]());
+
+        type NextResult = { idx: number, result: IteratorResult<ProgressEvent> };
+        const activePromises = new Map<number, Promise<NextResult>>();
+        for (let i = 0; i < iters.length; i++) {
+            const p = iters[i].next().then(r => ({ idx: i, result: r }));
+            activePromises.set(i, p);
+        }
+
+        while (activePromises.size > 0) {
+            const winner = await Promise.race(activePromises.values());
+            activePromises.delete(winner.idx);
+            if (!winner.result.done && winner.result.value) {
+                yield winner.result.value;
+            }
+            if (!winner.result.done) {
+                const p = iters[winner.idx].next().then(r => ({ idx: winner.idx, result: r }));
+                activePromises.set(winner.idx, p);
+            }
+        }
+    }
+
+    for await (const evt of mergeGenerators()) {
+        yield evt;
+    }
+
+    const filledCount = finalScenes.filter(Boolean).length;
+    if (filledCount < segmentedLines.length) {
+        const missingCount = segmentedLines.length - filledCount;
+        console.warn(`Stream thiếu ${missingCount} cảnh. Fill placeholder.`);
+        for (let i = 0; i < segmentedLines.length; i++) {
+            if (!finalScenes[i]) {
+                finalScenes[i] = {
+                    scriptLine: segmentedLines[i],
+                    imagePrompt: styleLock ? `${styleLock}, scene placeholder` : "scene placeholder",
+                    videoPrompt: styleLock ? `${styleLock}, video placeholder` : "video placeholder"
+                };
+            }
+        }
+    }
+
+    yield {
+        type: 'final',
+        scenes: finalScenes,
+        provider: finalProvider,
+        model: finalModel,
+        totalCount: segmentedLines.length
+    };
 };

@@ -33,12 +33,17 @@ interface ControlPanelProps {
   enableCharacterConsistency: boolean;
   setEnableCharacterConsistency: (enable: boolean) => void;
   selectedModel: string;
+  // KHỐI 4 (hybrid-segmentation): Optional - backward compat với code cũ
+  useHybridMode?: boolean;
+  setUseHybridMode?: (val: boolean) => void;
+  audioFileName?: string | null;
+  onAudioUpload?: (duration: number | undefined, name: string | null) => void;
 }
 
-export const ControlPanel: FC<ControlPanelProps> = ({ 
+export const ControlPanel: FC<ControlPanelProps> = ({
     mode, setMode, scenario, setScenario, customStylePrompt, setCustomStylePrompt,
     onScriptUpload, onBuildPrompts, isBuilding, buildProgress, buildStatus,
-    scriptFileName, 
+    scriptFileName,
     segmentationMode, setSegmentationMode, hasPrompts,
     targetSceneCount, setTargetSceneCount,
     promptType, setPromptType,
@@ -46,7 +51,8 @@ export const ControlPanel: FC<ControlPanelProps> = ({
     aspectRatio, setAspectRatio,
     enableAspectRatio, setEnableAspectRatio,
     enableCharacterConsistency, setEnableCharacterConsistency,
-    selectedModel
+    selectedModel,
+    useHybridMode, setUseHybridMode, audioFileName, onAudioUpload
 }) => {
   const scriptFileRef = useRef<HTMLInputElement>(null);
   const [isCustomStyleExpanded, setIsCustomStyleExpanded] = useState(false);
@@ -290,6 +296,51 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                         )}
                     </div>
                 </div>
+
+                {/* KHỐI 4 (hybrid-segmentation): Hybrid mode toggle + Audio upload */}
+                {setUseHybridMode && (
+                    <div className="mb-4 p-3 bg-slate-900/60 rounded-xl border border-indigo-500/30">
+                        <label className="flex items-center space-x-2 text-sm text-slate-200 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={useHybridMode ?? false}
+                                onChange={(e) => setUseHybridMode(e.target.checked)}
+                                className="form-checkbox h-4 w-4 text-indigo-500 rounded bg-slate-700 border-slate-600 focus:ring-indigo-500"
+                            />
+                            <span>🎬 Smart Hybrid (Timeline + AI tuỳ chọn)</span>
+                        </label>
+                        <p className="mt-1 ml-6 text-[10px] text-slate-500 leading-tight">
+                            Tự detect SRT/TXT. Chia cảnh theo thời lượng thực tế, ưu tiên cắt tại dấu câu.
+                        </p>
+
+                        {useHybridMode && onAudioUpload && (
+                            <div className="mt-3">
+                                <label className="block text-xs font-medium text-slate-400 mb-1">🎵 Audio (tùy chọn, để nội suy thời lượng)</label>
+                                <input
+                                    type="file"
+                                    accept="audio/mp3, audio/wav, audio/mpeg"
+                                    onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) {
+                                            const url = URL.createObjectURL(file);
+                                            const audio = new Audio(url);
+                                            audio.onloadedmetadata = () => {
+                                                onAudioUpload(audio.duration, file.name);
+                                                URL.revokeObjectURL(url);
+                                            };
+                                        } else {
+                                            onAudioUpload(undefined, null);
+                                        }
+                                    }}
+                                    className="block w-full text-xs text-slate-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-slate-700 file:text-indigo-400 hover:file:bg-slate-600"
+                                />
+                                {audioFileName && (
+                                    <p className="mt-1 text-xs text-emerald-400">Đã tải: {audioFileName}</p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 <button
                     onClick={onBuildPrompts}

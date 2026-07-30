@@ -9,7 +9,7 @@ import { ApiSettingsModal } from './components/modals/ApiSettingsModal';
 import { LibraryModal } from './components/modals/LibraryModal';
 import { GuideModal } from './components/modals/GuideModal';
 import { BookOpenIcon, LibraryIcon, KeyIcon, SparklesIcon, TextDocumentIcon, DownloadIcon } from './components/icons';
-import { analyzeScriptWithAIStream } from './services/geminiService';
+import { analyzeScriptWithAIStream, analyzeScriptWithAIHybridStream } from './services/geminiService';
 
 const App: FC = () => {
   // State
@@ -24,6 +24,10 @@ const App: FC = () => {
   const [segmentationMode, setSegmentationMode] = useState<'ai' | 'punctuation' | 'fixed'>('fixed');
   const [targetSceneCount, setTargetSceneCount] = useState<number>(10);
   const [promptType, setPromptType] = useState<PromptType>('image');
+  // KHỐI 4 (hybrid-segmentation): Hybrid mode + audio state (không breaking change)
+  const [useHybridMode, setUseHybridMode] = useState<boolean>(false);
+  const [audioDuration, setAudioDuration] = useState<number | undefined>(undefined);
+  const [audioFileName, setAudioFileName] = useState<string | null>(null);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [enableAspectRatio, setEnableAspectRatio] = useState<boolean>(false);
   const [enableCharacterConsistency, setEnableCharacterConsistency] = useState<boolean>(false);
@@ -199,22 +203,40 @@ const App: FC = () => {
           const expectedModel = kymaKey ? selectedKymaModel || 'deepseek-v4-flash' : selectedModel;
           addToast('info', 'Đang phân cảnh...', `Sử dụng ${expectedProvider} (${expectedModel}).`);
 
-          const stream = analyzeScriptWithAIStream(
-              scenario,
-              refImagesForService,
-              effectiveKey,
-              activeStylePrompt,
-              mode,
-              segmentationMode,
-              selectedModel,
-              targetSceneCount,
-              promptType,
-              aspectRatio,
-              enableAspectRatio,
-              enableCharacterConsistency,
-              kymaKey,
-              selectedKymaModel || 'deepseek-v4-flash'
-          );
+          const stream = useHybridMode
+              ? analyzeScriptWithAIHybridStream(
+                    scenario,
+                    refImagesForService,
+                    effectiveKey,
+                    activeStylePrompt,
+                    mode,
+                    selectedModel,
+                    targetSceneCount,
+                    promptType,
+                    aspectRatio,
+                    enableAspectRatio,
+                    enableCharacterConsistency,
+                    kymaKey,
+                    selectedKymaModel || 'deepseek-v4-flash',
+                    audioDuration,
+                    false // enhanceWithAI - off by default (nhanh + 0 cost AI call cho enhancement)
+                )
+              : analyzeScriptWithAIStream(
+                    scenario,
+                    refImagesForService,
+                    effectiveKey,
+                    activeStylePrompt,
+                    mode,
+                    segmentationMode,
+                    selectedModel,
+                    targetSceneCount,
+                    promptType,
+                    aspectRatio,
+                    enableAspectRatio,
+                    enableCharacterConsistency,
+                    kymaKey,
+                    selectedKymaModel || 'deepseek-v4-flash'
+                );
 
           let finalResults: { scenes: any[], provider: string, model: string, totalCount: number } | null = null;
           for await (const evt of stream) {
@@ -374,6 +396,13 @@ const App: FC = () => {
                         enableCharacterConsistency={enableCharacterConsistency}
                         setEnableCharacterConsistency={setEnableCharacterConsistency}
                         selectedModel={selectedModel}
+                        useHybridMode={useHybridMode}
+                        setUseHybridMode={setUseHybridMode}
+                        audioFileName={audioFileName}
+                        onAudioUpload={(duration, name) => {
+                            setAudioDuration(duration);
+                            setAudioFileName(name);
+                        }}
                     />
                 </div>
 

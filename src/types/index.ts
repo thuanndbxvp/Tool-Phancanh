@@ -38,3 +38,6 @@ export interface ToastMessage {
     title: string;
     message: string;
 }
+
+// TimelineBlock interface đã được định nghĩa trong src/utils/textSegmentation.ts
+// (gần chỗ sử dụng hơn để tránh coupling với types layer)
