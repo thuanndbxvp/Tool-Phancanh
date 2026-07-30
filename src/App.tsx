@@ -355,6 +355,19 @@ const App: FC = () => {
       URL.revokeObjectURL(url);
   };
 
+  // KHỐI v4.1: View chung cho cả scenes (sau bước 1) và prompts (sau bước 2)
+  // - Sau bước 1: scenes[] có data, prompts[] rỗng → hiển thị scene card với prompt rỗng
+  // - Sau bước 2: prompts[] có data → dùng prompts làm nguồn chính
+  // Phân biệt qua hasPrompts để đổi header + ẩn button xuất file.
+  const displayItems: ScenePrompt[] = prompts.length > 0
+      ? prompts
+      : scenes.map((line, idx) => ({
+          id: `scene-${idx}`,
+          scriptLine: line,
+          imagePrompt: '',
+          videoPrompt: '',
+      }));
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-emerald-500/30">
         <ToastContainer toasts={toasts} onClose={removeToast} />
@@ -473,52 +486,66 @@ const App: FC = () => {
                 </div>
 
                 <div className="lg:col-span-8">
-                    {prompts.length === 0 ? (
+                    {displayItems.length === 0 ? (
                         <WelcomeGuide />
                     ) : (
                         <div className="space-y-6 animate-fade-in">
                             <div className="flex items-center justify-between bg-slate-900/50 p-4 rounded-xl border border-slate-800">
                                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
                                     <SparklesIcon className="h-5 w-5 text-emerald-400" />
-                                    Storyboard đã tạo ({prompts.length} cảnh)
+                                    {prompts.length > 0
+                                        ? `Storyboard đã tạo (${displayItems.length} cảnh)`
+                                        : `Phân cảnh xong (${displayItems.length} cảnh) — chờ tạo prompt`}
                                 </h2>
-                                <div className="flex items-center gap-3">
-                                    <button 
-                                        onClick={handleDownloadTxt}
-                                        className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium text-sm transition-colors flex items-center gap-2 border border-slate-600"
-                                    >
-                                        <TextDocumentIcon className="h-4 w-4" /> Xuất Script (.txt)
-                                    </button>
-                                    <button 
-                                        onClick={handleDownloadExcel}
-                                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium text-sm transition-colors flex items-center gap-2 shadow-lg shadow-emerald-500/20"
-                                    >
-                                        <DownloadIcon className="h-4 w-4" /> Xuất Excel
-                                    </button>
-                                </div>
+                                {prompts.length > 0 && (
+                                    <div className="flex items-center gap-3">
+                                        <button
+                                            onClick={handleDownloadTxt}
+                                            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium text-sm transition-colors flex items-center gap-2 border border-slate-600"
+                                        >
+                                            <TextDocumentIcon className="h-4 w-4" /> Xuất Script (.txt)
+                                        </button>
+                                        <button
+                                            onClick={handleDownloadExcel}
+                                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium text-sm transition-colors flex items-center gap-2 shadow-lg shadow-emerald-500/20"
+                                        >
+                                            <DownloadIcon className="h-4 w-4" /> Xuất Excel
+                                        </button>
+                                    </div>
+                                )}
                             </div>
-                            
+
                             <div className="space-y-4">
-                                {prompts.map((scene, idx) => (
-                                    <div key={scene.id} className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-emerald-500/30 transition-all shadow-sm">
-                                        <div className="flex justify-between items-start mb-3">
-                                            <span className="bg-slate-800 text-slate-400 text-xs font-bold px-2 py-1 rounded uppercase tracking-wider">Cảnh {idx + 1}</span>
-                                        </div>
-                                        <div className="mb-4">
-                                            <p className="text-slate-300 italic font-medium border-l-2 border-emerald-500/50 pl-3 py-1">"{scene.scriptLine}"</p>
-                                        </div>
-                                        <div className="grid grid-cols-1 gap-4 text-sm">
-                                            <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800/50">
-                                                <p className="text-xs text-slate-500 font-bold mb-1 uppercase">
-                                                    {scene.videoPrompt ? "Mô tả Video (Veo/Sora)" : "Mô tả Hình ảnh"}
-                                                </p>
-                                                <p className="text-slate-300 leading-relaxed text-xs">
-                                                    {scene.videoPrompt || scene.imagePrompt}
-                                                </p>
+                                {displayItems.map((scene, idx) => {
+                                    const hasPrompt = !!(scene.imagePrompt || scene.videoPrompt);
+                                    return (
+                                        <div key={scene.id} className={`bg-slate-900 border rounded-xl p-5 transition-all shadow-sm ${hasPrompt ? 'border-slate-800 hover:border-emerald-500/30' : 'border-amber-500/20 hover:border-amber-500/40'}`}>
+                                            <div className="flex justify-between items-start mb-3">
+                                                <span className={`text-xs font-bold px-2 py-1 rounded uppercase tracking-wider ${hasPrompt ? 'bg-slate-800 text-slate-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                                    Cảnh {idx + 1}
+                                                </span>
+                                                {!hasPrompt && (
+                                                    <span className="text-[10px] text-amber-400/70 italic">
+                                                        Chưa có prompt — bấm "Tạo prompt hàng loạt"
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="mb-4">
+                                                <p className="text-slate-300 italic font-medium border-l-2 border-emerald-500/50 pl-3 py-1">"{scene.scriptLine}"</p>
+                                            </div>
+                                            <div className="grid grid-cols-1 gap-4 text-sm">
+                                                <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800/50">
+                                                    <p className="text-xs text-slate-500 font-bold mb-1 uppercase">
+                                                        {scene.videoPrompt ? "Mô tả Video (Veo/Sora)" : "Mô tả Hình ảnh"}
+                                                    </p>
+                                                    <p className={`leading-relaxed text-xs ${hasPrompt ? 'text-slate-300' : 'text-slate-600 italic'}`}>
+                                                        {scene.videoPrompt || scene.imagePrompt || '— chưa sinh prompt —'}
+                                                    </p>
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     )}
