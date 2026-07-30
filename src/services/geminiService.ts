@@ -1,17 +1,22 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { tokenizeSentences, segmentByWaterFilling, segmentByIndex, Sentence, ensureSceneCount, parseSrtToTimeline, parseTxtToSyntheticTimeline, segmentByTimeline, TimelineBlock } from "../utils/textSegmentation";
 import { Cache } from "../utils/cache";
+import { parseJsonArray, FALLBACK_MODELS } from "../utils/aiHelpers";
 
 
 
-export const validateApiKey = async (apiKey: string, modelName: string = 'gemini-3-flash-preview'): Promise<boolean> => {
+export const validateApiKey = async (apiKey: string, provider: 'gemini' | 'kyma' = 'gemini'): Promise<boolean> => {
     try {
-        const ai = new GoogleGenAI({ apiKey });
-        await ai.models.generateContent({
-            model: modelName,
-            contents: 'ping',
-        });
-        return true;
+        if (provider === 'gemini') {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+            const res = await fetch(url);
+            return res.ok;
+        } else {
+            const res = await fetch('https://kymaapi.com/v1/models', {
+                headers: { 'Authorization': `Bearer ${apiKey}` }
+            });
+            return res.ok;
+        }
     } catch (error) {
         console.error("Key Validation Failed:", error);
         return false;
@@ -36,27 +41,44 @@ const shouldRetry = (e: any): boolean => {
     return true; // 429, 500, timeout... thì retry
 };
 
-// Nâng cấp withRetry: nhận danh sách keys (CSV) để xoay vòng khi gặp 429
-const withRetry = async <T>(fn: (key: string) => Promise<T>, keys: string, retries: number = 2, delayMs: number = 2000): Promise<T> => {
+// Nâng cấp withRetry: Xoay vòng Key và xoay vòng Model (Fallback)
+const withRetry = async <T>(
+    fn: (key: string, modelToUse: string) => Promise<T>,
+    keys: string,
+    requestedModel: string,
+    fallbackList: string[],
+    retries: number = 2,
+    delayMs: number = 2000
+): Promise<T> => {
     const keyList = keys.split(',').map(k => k.trim()).filter(Boolean);
     let currentKeyIndex = 0;
 
+    // Đảm bảo requestedModel nằm ở đầu mảng fallback
+    const modelsToTry = [requestedModel, ...fallbackList.filter(m => m !== requestedModel)];
+    let currentModelIndex = 0;
+
     for (let r = 0; r <= retries; r++) {
         try {
-            return await fn(keyList[currentKeyIndex]);
+            return await fn(keyList[currentKeyIndex], modelsToTry[currentModelIndex]);
         } catch (e) {
             if (r === retries || !shouldRetry(e)) {
                 throw e;
             }
-            // Nếu 429 (Quá tải), tự động đảo sang Key tiếp theo trong mảng
             const msg = String((e as Error)?.message || '');
-            if (msg.includes('429') && keyList.length > 1) {
-                currentKeyIndex = (currentKeyIndex + 1) % keyList.length;
-                console.warn(`Hit 429! Rotating to key index ${currentKeyIndex}...`);
+
+            // Xoay vòng Key trước
+            if (msg.includes('429') || msg.includes('503')) {
+                if (keyList.length > 1) {
+                    currentKeyIndex = (currentKeyIndex + 1) % keyList.length;
+                    console.warn(`Hit limit! Rotating to key index ${currentKeyIndex}...`);
+                } else if (modelsToTry.length > 1 && currentModelIndex < modelsToTry.length - 1) {
+                    // Nếu chỉ có 1 key, xoay vòng Model
+                    currentModelIndex++;
+                    console.warn(`Hit limit! Falling back to model ${modelsToTry[currentModelIndex]}...`);
+                }
             }
 
             await new Promise(res => setTimeout(res, delayMs * (r + 1)));
-            console.warn(`Retry ${r+1}/${retries} after error:`, e);
         }
     }
     throw new Error("Unreachable");
@@ -100,10 +122,10 @@ OUTPUT ONLY A JSON ARRAY.`;
         requiredFields.push("videoPrompt");
     }
 
-    const attemptGemini = async (key: string) => {
+    const attemptGemini = async (key: string, modelToUse: string) => {
         const ai = new GoogleGenAI({ apiKey: key });
         const response = await ai.models.generateContent({
-            model: modelName,
+            model: modelToUse,
             contents: `Generate prompts for these lines:\n${batchInput}`,
             config: {
                 systemInstruction: batchSystemInstruction,
@@ -130,7 +152,7 @@ OUTPUT ONLY A JSON ARRAY.`;
         }
     };
 
-    const attemptKyma = async (key: string) => {
+    const attemptKyma = async (key: string, modelToUse: string) => {
         const response = await fetch('https://kymaapi.com/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -138,13 +160,13 @@ OUTPUT ONLY A JSON ARRAY.`;
                 'Authorization': `Bearer ${key}`
             },
             body: JSON.stringify({
-                model: kymaModelName,
+                model: modelToUse,
                 messages: [
                     { role: 'system', content: batchSystemInstruction },
                     { role: 'user', content: `Generate prompts for these lines:\n${batchInput}` }
                 ],
                 temperature: 0.7,
-                max_tokens: kymaModelName.includes('flash') ? 10000 : 8000 // Token cao cho Batch
+                max_tokens: modelToUse.includes('flash') ? 10000 : 8000 // Token cao cho Batch
             })
         });
         if (!response.ok) throw new Error(`Kyma API Error: ${response.status}`);
@@ -176,10 +198,10 @@ OUTPUT ONLY A JSON ARRAY.`;
     // Provider đơn nhất: nếu có Kyma → dùng Kyma, ngược lại → dùng Gemini.
     // Không fallback giữa các provider (đã có xoay vòng key).
     if (kymaKey) {
-        return await withRetry((k) => attemptKyma(k), kymaKey);
+        return await withRetry((k, m) => attemptKyma(k, m), kymaKey, kymaModelName, FALLBACK_MODELS.kyma);
     }
     if (keyToUse) {
-        return await withRetry((k) => attemptGemini(k), keyToUse);
+        return await withRetry((k, m) => attemptGemini(k, m), keyToUse, modelName, FALLBACK_MODELS.gemini);
     }
 
     throw new Error("Tất cả API đều lỗi khi xử lý batch.");
@@ -325,10 +347,10 @@ Example for ${targetSceneCount} scenes:
         toSentenceIdx: { type: Type.INTEGER },
     };
 
-    const attemptGemini = async (key: string) => {
+    const attemptGemini = async (key: string, modelToUse: string) => {
         const ai = new GoogleGenAI({ apiKey: key });
         const response = await ai.models.generateContent({
-            model: modelName,
+            model: modelToUse,
             contents: `Script:\n\n${scriptText}`,
             config: {
                 systemInstruction: systemInstruction,
@@ -355,7 +377,7 @@ Example for ${targetSceneCount} scenes:
         }
     };
 
-    const attemptKyma = async (key: string) => {
+    const attemptKyma = async (key: string, modelToUse: string) => {
         const response = await fetch('https://kymaapi.com/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -363,7 +385,7 @@ Example for ${targetSceneCount} scenes:
                 'Authorization': `Bearer ${key}`
             },
             body: JSON.stringify({
-                model: kymaModelName,
+                model: modelToUse,
                 messages: [
                     { role: 'system', content: systemInstruction },
                     { role: 'user', content: `Script:\n\n${scriptText}` }
@@ -392,10 +414,10 @@ Example for ${targetSceneCount} scenes:
     };
 
     if (kymaKey) {
-        return await withRetry((k) => attemptKyma(k), kymaKey);
+        return await withRetry((k, m) => attemptKyma(k, m), kymaKey, kymaModelName, FALLBACK_MODELS.kyma);
     }
     if (keyToUse) {
-        return await withRetry((k) => attemptGemini(k), keyToUse);
+        return await withRetry((k, m) => attemptGemini(k, m), keyToUse, modelName, FALLBACK_MODELS.gemini);
     }
 
     throw new Error("Lỗi phân tích điểm neo (Anchors).");
@@ -416,10 +438,10 @@ For each character, write a concise 1-sentence visual description (age, gender, 
 Return a JSON object where the key is the character's name and the value is their visual description.
 Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo woman, long blonde hair, red dress"}`;
 
-    const attemptGemini = async (key: string) => {
+    const attemptGemini = async (key: string, modelToUse: string) => {
         const ai = new GoogleGenAI({ apiKey: key });
         const response = await ai.models.generateContent({
-            model: modelName,
+            model: modelToUse,
             contents: `Script:\n\n${script}`,
             config: {
                 systemInstruction: systemInstruction,
@@ -431,7 +453,7 @@ Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo wo
         return text.trim();
     };
 
-    const attemptKyma = async (key: string) => {
+    const attemptKyma = async (key: string, modelToUse: string) => {
         const response = await fetch('https://kymaapi.com/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -439,7 +461,7 @@ Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo wo
                 'Authorization': `Bearer ${key}`
             },
             body: JSON.stringify({
-                model: kymaModelName,
+                model: modelToUse,
                 messages: [
                     { role: 'system', content: systemInstruction },
                     { role: 'user', content: `Script:\n\n${script}` }
@@ -467,9 +489,9 @@ Example: {"John": "30yo man, short brown hair, wearing a suit", "Mary": "25yo wo
 
     let result: string | null = null;
     if (kymaKey) {
-        result = await withRetry((k) => attemptKyma(k), kymaKey);
+        result = await withRetry((k, m) => attemptKyma(k, m), kymaKey, kymaModelName, FALLBACK_MODELS.kyma);
     } else if (keyToUse) {
-        result = await withRetry((k) => attemptGemini(k), keyToUse);
+        result = await withRetry((k, m) => attemptGemini(k, m), keyToUse, modelName, FALLBACK_MODELS.gemini);
     }
 
     if (!result) throw new Error("Tất cả API đều lỗi khi phân tích nhân vật.");
@@ -995,33 +1017,51 @@ export const analyzeScriptWithAIHybridStream = async function* (
 You MUST return EXACTLY ${targetSceneCount} scenes. Do not change any text content, only move words/sentences between adjacent scenes if it improves the flow.
 Return ONLY a JSON array of strings, where each string is a scene.`;
 
-            let adjustedScenes: string[] = [];
-            if (kymaKey) {
-                const response = await fetch('https://kymaapi.com/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${kymaKey}` },
-                    body: JSON.stringify({
-                        model: kymaModelName,
-                        messages: [
-                            { role: 'system', content: systemInstruction },
-                            { role: 'user', content: scriptText }
-                        ],
-                        temperature: 0.1,
-                    })
-                });
-                const data = await response.json();
-                const text = data?.choices?.[0]?.message?.content || "[]";
-                const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
-                adjustedScenes = JSON.parse(cleanJson);
-            }
+            const attemptEnhance = async (key: string, currentModel: string) => {
+                const url = kymaKey ? 'https://kymaapi.com/v1/chat/completions' : `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${key}`;
 
+                if (kymaKey) {
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+                        body: JSON.stringify({
+                            model: currentModel,
+                            messages: [
+                                { role: 'system', content: systemInstruction },
+                                { role: 'user', content: scriptText }
+                            ],
+                            temperature: 0.1,
+                        })
+                    });
+                    if (!response.ok) throw new Error(`Kyma HTTP ${response.status}`);
+                    const data = await response.json();
+                    return data.choices?.[0]?.message?.content || "[]";
+                } else {
+                    const ai = new GoogleGenAI({ apiKey: key });
+                    const response = await ai.models.generateContent({
+                        model: currentModel,
+                        contents: scriptText,
+                        config: {
+                            systemInstruction,
+                            responseMimeType: "application/json"
+                        }
+                    });
+                    return response.text || "[]";
+                }
+            };
+
+            const textOutput = kymaKey
+                ? await withRetry(attemptEnhance, kymaKey, kymaModelName, FALLBACK_MODELS.kyma, 2)
+                : await withRetry(attemptEnhance, apiKey, modelName, FALLBACK_MODELS.gemini, 2);
+
+            const adjustedScenes = parseJsonArray(textOutput, targetSceneCount);
             if (adjustedScenes.length === targetSceneCount) {
                 segmentedLines = adjustedScenes;
             } else {
-                console.warn(`AI enhance returned ${adjustedScenes.length} scenes (expected ${targetSceneCount}). Using default timeline.`);
+                console.warn(`Enhance fail: expected ${targetSceneCount}, got ${adjustedScenes.length}`);
             }
         } catch (e) {
-            console.warn("AI enhance failed, using default timeline segment:", e);
+            console.warn("AI enhance failed, using default timeline segment", e);
         }
     }
 

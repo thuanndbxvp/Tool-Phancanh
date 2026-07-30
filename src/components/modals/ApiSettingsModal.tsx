@@ -61,7 +61,7 @@ export const ApiSettingsModal: FC<{
         }
 
         setIsValidating(true);
-        const isValid = await validateApiKey(newKey.trim(), selectedModel);
+        const isValid = await validateApiKey(newKey.trim(), 'gemini');
         setIsValidating(false);
 
         const newKeyData: ApiKeyData = {
