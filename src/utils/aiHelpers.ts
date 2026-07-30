@@ -63,5 +63,5 @@ export const parseJsonArray = (text: string, expectedCount?: number): any[] => {
  */
 export const FALLBACK_MODELS: { gemini: string[]; kyma: string[] } = {
     gemini: ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
-    kyma: ['deepseek-v4-flash', 'gpt-4o-mini', 'claude-3-haiku-20240307'],
+    kyma: ['qwen-3.7-flash', 'deepseek-v4-flash', 'gpt-4o-mini', 'claude-3-haiku-20240307'],
 };

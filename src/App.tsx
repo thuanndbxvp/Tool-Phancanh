@@ -68,8 +68,8 @@ const App: FC = () => {
                 const savedKymaModel = localStorage.getItem('sbgen_kyma_model');
                 if (savedKymaModel && models.some((m: any) => m.id === savedKymaModel)) {
                     setSelectedKymaModel(savedKymaModel);
-                } else if (models.some((m: any) => m.id === 'deepseek-v4-flash')) {
-                    setSelectedKymaModel('deepseek-v4-flash');
+                } else if (models.some((m: any) => m.id === 'qwen-3.7-flash')) {
+                    setSelectedKymaModel('qwen-3.7-flash');
                 } else if (models.length > 0) {
                     setSelectedKymaModel(models[0].id);
                 }
@@ -219,7 +219,7 @@ const App: FC = () => {
               effectiveAudioDuration,
               effectiveKey,
               kymaKey,
-              selectedKymaModel || 'deepseek-v4-flash'
+              selectedKymaModel || 'qwen-3.7-flash'
           );
 
           setScenes(sceneLines);
@@ -263,7 +263,7 @@ const App: FC = () => {
           }
 
           const expectedProvider = kymaKey ? 'Kyma' : 'Gemini';
-          const expectedModel = kymaKey ? selectedKymaModel || 'deepseek-v4-flash' : selectedModel;
+          const expectedModel = kymaKey ? selectedKymaModel || 'qwen-3.7-flash' : selectedModel;
           addToast('info', 'Đang sinh prompt...', `Sử dụng ${expectedProvider} (${expectedModel}).`);
 
           const stream = generatePromptsForScenes(
@@ -277,7 +277,7 @@ const App: FC = () => {
               enableCharacterConsistency,
               scenario,  // scriptContext cho character dict
               kymaKey,
-              selectedKymaModel || 'deepseek-v4-flash'
+              selectedKymaModel || 'qwen-3.7-flash'
           );
 
           let finalResults: { scenes: any[], provider: string, model: string, totalCount: number } | null = null;

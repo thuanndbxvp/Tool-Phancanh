@@ -92,7 +92,7 @@ const generateBatch = async (
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "deepseek-v4-flash"
+    kymaModelName: string = "qwen-3.7-flash"
 ): Promise<any[]> => {
     const batchSystemInstruction = `You are a professional storyboard artist and script analyst. 
 Your task is to generate visual prompts for a list of PRE-SEGMENTED script lines.
@@ -215,7 +215,7 @@ const generateBatchStream = async function* (
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "deepseek-v4-flash"
+    kymaModelName: string = "qwen-3.7-flash"
 ): AsyncGenerator<{ index: number, scene: any }> {
     // Provider đơn nhất: nếu có Kyma → dùng Kyma, ngược lại → dùng Gemini.
     // Học từ auto-edit-video-main:
@@ -479,7 +479,7 @@ const fetchSceneAnchors = async (
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "deepseek-v4-flash"
+    kymaModelName: string = "qwen-3.7-flash"
 ): Promise<{ fromSentenceIdx: number, toSentenceIdx: number }[]> => {
     const scriptText = sentences.map(s => `[${s.idx}] ${s.text}`).join('\n');
 
@@ -582,7 +582,7 @@ const fetchCharacterDictionary = async (
     modelName: string,
     keyToUse: string,
     kymaKey?: string,
-    kymaModelName: string = "deepseek-v4-flash"
+    kymaModelName: string = "qwen-3.7-flash"
 ): Promise<string> => {
     const cached = Cache.getCharacters(script, kymaKey ? kymaModelName : modelName);
     if (cached) return cached;
@@ -848,7 +848,7 @@ export const analyzeScriptWithAIStream = async function* (
     promptType: 'image' | 'video' = 'image',
     enableCharacterConsistency: boolean = false,
     kymaKey?: string,
-    kymaModelName: string = "gpt-4o-mini"
+    kymaModelName: string = "qwen-3.7-flash"
 ): AsyncGenerator<{ type: 'progress' | 'final', scenes?: any[], progress?: number, status?: string, provider?: string, model?: string, totalCount?: number }> {
     // Theo dõi provider thực sự
     let finalProvider = kymaKey ? "Kyma" : (apiKey ? "Gemini (User Key)" : "System Default");
@@ -1118,7 +1118,7 @@ export const analyzeScriptWithAIHybridStream = async function* (
     promptType: 'image' | 'video' = 'image',
     enableCharacterConsistency: boolean = false,
     kymaKey?: string,
-    kymaModelName: string = "gpt-4o-mini",
+    kymaModelName: string = "qwen-3.7-flash",
     audioDuration?: number,
     enhanceWithAI: boolean = false
 ): AsyncGenerator<{ type: 'progress' | 'final', scenes?: any[], progress?: number, status?: string, provider?: string, model?: string, totalCount?: number }> {
@@ -1389,7 +1389,7 @@ export const splitScriptToScenes = async (
     audioDuration?: number,
     apiKey: string = '',
     kymaKey: string = '',
-    kymaModelName: string = 'gpt-4o-mini'
+    kymaModelName: string = 'qwen-3.7-flash'
 ): Promise<string[]> => {
     if (targetSceneCount <= 1) return [script];
 
@@ -1435,7 +1435,7 @@ export const generatePromptsForScenes = async function* (
     enableCharacterConsistency: boolean = false,
     scriptContext: string = '',
     kymaKey?: string,
-    kymaModelName: string = 'gpt-4o-mini'
+    kymaModelName: string = 'qwen-3.7-flash'
 ): AsyncGenerator<{ type: 'progress' | 'final', scenes?: any[], progress?: number, status?: string, provider?: string, model?: string, totalCount?: number }> {
     if (!kymaKey && !apiKey) {
         throw new Error("Cần API key (Kyma hoặc Gemini) để sinh prompt. Vui lòng cấu hình trước.");
