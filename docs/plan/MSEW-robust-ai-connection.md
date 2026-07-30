@@ -204,3 +204,35 @@ Tìm chỗ gọi hàm `validateApiKey` và đảm bảo truyền đúng `provide
 const isValid = await validateApiKey(keyToTest, type === 'kyma' ? 'kyma' : 'gemini');
 ```
 Điều này giúp test siêu nhanh mà không tốn token.
+
+---
+
+## KHỐI 4: SỬA LỖI SẬP LUỒNG RATE LIMIT (MAX_CONCURRENT)
+
+Mở `src/services/geminiService.ts`.
+
+### 4.1. Tăng thời gian Retry cho Gemini
+Tìm hàm `generateBatchStream`, kéo xuống phần `// NON-STREAMING Gemini path`.
+Sửa cấu hình Retry như sau:
+```typescript
+    const MAX_RETRIES = 5;
+    let lastError: any = null;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        // Thời gian chờ tăng mạnh để né Rate Limit: 3s, 8s, 15s, 25s, 40s
+        const delayMs = attempt === 0 ? 3000 : 3000 + (attempt * 5000); 
+```
+
+### 4.2. Giảm luồng đồng thời (Concurrency)
+Tìm hàm `generatePromptsForScenes` (và/hoặc `analyzeScriptWithAIHybridStream` nếu có), di chuyển tới khối `async function* mergeGenerators()`.
+Thay đổi cách tính `MAX_CONCURRENT` thành động dựa vào API Key:
+```typescript
+        // Kyma khỏe thì 5, Gemini Free thì chỉ 2 để tránh 429
+        const MAX_CONCURRENT = kymaKey ? 5 : 2;
+```
+Bảo đảm vòng lặp khởi tạo giới hạn chặt số lượng:
+```typescript
+        for (let i = 0; i < Math.min(MAX_CONCURRENT, iters.length); i++) {
+            const p = iters[i].next().then(r => ({ idx: i, result: r }));
+            activePromises.set(i, p);
+        }
+```

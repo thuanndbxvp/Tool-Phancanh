@@ -22,5 +22,9 @@
 
 ## 5. Danh sách file sẽ thay đổi
 1. `src/utils/aiHelpers.ts` (File mới: Chứa helper parse JSON và constant models).
-2. `src/services/geminiService.ts` (Import helper, refactor `withRetry` và `validateApiKey`).
+2. `src/services/geminiService.ts` (Import helper, refactor `withRetry` và `validateApiKey`, sửa Concurrency).
 3. `src/components/modals/ApiSettingsModal.tsx` (Xử lý UI Check API).
+
+## 6. Sửa lỗi sập luồng Rate Limit (20-25 cảnh)
+- Cập nhật luồng `mergeGenerators` trong `geminiService.ts` để thay đổi `MAX_CONCURRENT` động. Nếu dùng Gemini Free Key, hạ xuống 2 (thay vì 5) để không bị đè bẹp bởi lỗi 429 Too Many Requests.
+- Nâng thời gian retry (Exponential Backoff) trong hàm `generateBatchStream` khi gọi Gemini lên cao hơn (chờ 5s, 10s, 15s thay vì 2s, 4s) để có đủ thời gian reset Quota 15 RPM.
