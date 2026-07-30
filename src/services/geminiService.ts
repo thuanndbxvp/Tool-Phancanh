@@ -324,29 +324,114 @@ const generateBatchStream = async function* (
     }
     if (!stream) throw lastError || new Error("Stream init failed");
 
-    const objectRegex = /\{(?:[^{}]|\{[^{}]*\})*\}/g;
+    // Thu buffer toàn bộ → parse 1 lần khi stream done.
+    // Cách cũ (regex incremental) bị miss khi:
+    //   - String chứa } bên trong (vd: "with } inside")
+    //   - AI trả prefix text thay vì JSON thuần
+    //   - JSON bị cắt giữa chunk
+    // Cách mới: giống auto-edit-video-main/ai_prompts.py::_parse_array
+    //   - Bóc ```json wrapper nếu có
+    //   - Tìm [ ... ] trong text → JSON.parse
+    //   - Best-effort fallback: split line by line
     let buffer = '';
-    let index = 0;
-    const yieldedIndices = new Set<number>();
     for await (const chunk of stream) {
         const chunkText = chunk.text || '';
         buffer += chunkText;
-        const matches = buffer.match(objectRegex);
-        if (matches) {
-            for (const m of matches) {
+        // Yield progress mỗi chunk để UI biết stream còn sống
+        // (KHÔNG yield scene ở đây — sẽ yield khi parse xong)
+    }
+
+    // Sau stream done → parse buffer
+    const scenes = parseSceneArrayFromBuffer(buffer, scenesBatch.length);
+
+    let index = 0;
+    for (const scene of scenes) {
+        yield { index: index++, scene };
+    }
+};
+
+/**
+ * Parse JSON array từ buffer streaming. Học từ auto-edit-video-main
+ * ai_prompts.py::_parse_array().
+ *
+ * Ưu tiên:
+ *   1. JSON.parse trực tiếp (nếu buffer là JSON thuần)
+ *   2. Bóc ```json ... ``` wrapper
+ *   3. Rút [ ... ] đầu tiên → JSON.parse
+ *   4. Best-effort: rút các { ... } riêng lẻ (fallback)
+ *   5. Trả [] nếu tất cả fail
+ */
+const parseSceneArrayFromBuffer = (rawText: string, expectedCount: number): any[] => {
+    let text = (rawText || '').trim();
+
+    // 1) Bóc markdown wrapper ```json ... ```
+    if (text.startsWith('```')) {
+        text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+    }
+
+    // 2) Thử JSON.parse trực tiếp
+    try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) return parsed.slice(0, expectedCount);
+    } catch { /* fallthrough */ }
+
+    // 3) Tìm [ ... ] trong text (AI đôi khi trả prefix)
+    const firstBracket = text.indexOf('[');
+    const lastBracket = text.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket > firstBracket) {
+        const slice = text.slice(firstBracket, lastBracket + 1);
+        try {
+            const parsed = JSON.parse(slice);
+            if (Array.isArray(parsed)) return parsed.slice(0, expectedCount);
+        } catch { /* fallthrough */ }
+    }
+
+    // 4) Best-effort: rút từng { ... } object (dùng non-greedy match
+    //    KHÔNG bị stuck khi string chứa } bên trong — dùng parser
+    //    từng ký tự)
+    const objects = parseObjectsFromText(text);
+    if (objects.length > 0) return objects.slice(0, expectedCount);
+
+    return [];
+};
+
+/**
+ * Parse các JSON object từ text brute-force: duyệt từng ký tự,
+ * đếm `{` và `}` (bỏ qua nếu trong string literal), tách object.
+ * An toàn với "}" bên trong string.
+ */
+const parseObjectsFromText = (text: string): any[] => {
+    const objects: any[] = [];
+    let depth = 0;
+    let start = -1;
+    let inString = false;
+    let escape = false;
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+
+        if (escape) { escape = false; continue; }
+        if (ch === '\\') { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+
+        if (inString) continue;
+
+        if (ch === '{') {
+            if (depth === 0) start = i;
+            depth++;
+        } else if (ch === '}') {
+            depth--;
+            if (depth === 0 && start !== -1) {
+                const objStr = text.slice(start, i + 1);
                 try {
-                    const scene = JSON.parse(m);
-                    // Skip if we've already yielded this index (safety)
-                    if (yieldedIndices.has(index)) continue;
-                    yieldedIndices.add(index);
-                    yield { index: index++, scene };
-                    buffer = buffer.replace(m, '');
-                } catch {
-                    // Object chưa hoàn chỉnh, đợi chunk tiếp
-                }
+                    objects.push(JSON.parse(objStr));
+                } catch { /* skip malformed */ }
+                start = -1;
             }
         }
     }
+
+    return objects;
 };
 
 /**
