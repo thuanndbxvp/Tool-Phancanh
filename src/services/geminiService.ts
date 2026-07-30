@@ -281,22 +281,44 @@ const generateBatchStream = async function* (
     }
 
     const ai = new GoogleGenAI({ apiKey: keyToUse.split(',')[0].trim() });
-    const stream = await ai.models.generateContentStream({
-        model: modelName,
-        contents: `Generate prompts for these lines:\n${JSON.stringify(scenesBatch, null, 2)}`,
-        config: {
-            systemInstruction,
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: schemaProperties,
-                    required: requiredFields
+    // Retry the whole stream generation up to 2 times on transient errors
+    // (429 rate limit, 503 unavailable, network timeout). Non-transient
+    // errors throw immediately.
+    const RETRYABLE_PATTERNS = ['429', '503', 'unavailable', 'timeout', 'fetch failed', 'econnreset'];
+    const isRetryable = (e: any) => {
+        const msg = String(e?.message || e || '').toLowerCase();
+        return RETRYABLE_PATTERNS.some(p => msg.includes(p));
+    };
+
+    let stream: AsyncIterable<any> | null = null;
+    let lastError: any = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            stream = await ai.models.generateContentStream({
+                model: modelName,
+                contents: `Generate prompts for these lines:\n${JSON.stringify(scenesBatch, null, 2)}`,
+                config: {
+                    systemInstruction,
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: Type.ARRAY,
+                        items: {
+                            type: Type.OBJECT,
+                            properties: schemaProperties,
+                            required: requiredFields
+                        }
+                    }
                 }
-            }
+            });
+            break;
+        } catch (e) {
+            lastError = e;
+            if (!isRetryable(e) || attempt === 1) throw e;
+            console.warn(`Batch stream attempt ${attempt + 1} failed (${e?.message || e}); retrying in 2s...`);
+            await new Promise(r => setTimeout(r, 2000));
         }
-    });
+    }
+    if (!stream) throw lastError || new Error("Stream init failed");
 
     const objectRegex = /\{(?:[^{}]|\{[^{}]*\})*\}/g;
     let buffer = '';
@@ -1094,7 +1116,7 @@ For each input scriptLine, generate a JSON object with:
 ${promptGenerationInstruction}`;
 
     // 3. STREAMING BATCH PROCESSING
-    const BATCH_SIZE = 6;
+    const BATCH_SIZE = 4;
     const batches: string[][] = [];
     for (let i = 0; i < segmentedLines.length; i += BATCH_SIZE) {
         batches.push(segmentedLines.slice(i, i + BATCH_SIZE));
@@ -1148,12 +1170,15 @@ ${promptGenerationInstruction}`;
     }
 
     async function* mergeGenerators() {
+        const MAX_CONCURRENT = 4;
         const pending: AsyncGenerator<ProgressEvent>[] = generators.map((_, i) => consumeGenerator(i));
         const iters = pending.map(g => g[Symbol.asyncIterator]());
 
         type NextResult = { idx: number, result: IteratorResult<ProgressEvent> };
         const activePromises = new Map<number, Promise<NextResult>>();
-        for (let i = 0; i < iters.length; i++) {
+        // Start at most MAX_CONCURRENT generators to avoid hitting Gemini rate limits
+        // when total batches > MAX_CONCURRENT (e.g. 75 scenes / BATCH_SIZE 4 = 19 batches).
+        for (let i = 0; i < Math.min(MAX_CONCURRENT, iters.length); i++) {
             const p = iters[i].next().then(r => ({ idx: i, result: r }));
             activePromises.set(i, p);
         }
@@ -1167,6 +1192,10 @@ ${promptGenerationInstruction}`;
             if (!winner.result.done) {
                 const p = iters[winner.idx].next().then(r => ({ idx: winner.idx, result: r }));
                 activePromises.set(winner.idx, p);
+            } else if (winner.idx + MAX_CONCURRENT < iters.length) {
+                const nextIdx = winner.idx + MAX_CONCURRENT;
+                const p = iters[nextIdx].next().then(r => ({ idx: nextIdx, result: r }));
+                activePromises.set(nextIdx, p);
             }
         }
     }
@@ -1306,7 +1335,7 @@ For each input scriptLine, generate a JSON object with:
 ${promptGenerationInstruction}`;
 
     // 3. BATCH PROCESSING
-    const BATCH_SIZE = 6;
+    const BATCH_SIZE = 4;
     const batches: string[][] = [];
     for (let i = 0; i < sceneLines.length; i += BATCH_SIZE) {
         batches.push(sceneLines.slice(i, i + BATCH_SIZE));
@@ -1360,12 +1389,15 @@ ${promptGenerationInstruction}`;
     }
 
     async function* mergeGenerators() {
+        const MAX_CONCURRENT = 4;
         const pending: AsyncGenerator<ProgressEvent>[] = generators.map((_, i) => consumeGenerator(i));
         const iters = pending.map(g => g[Symbol.asyncIterator]());
 
         type NextResult = { idx: number, result: IteratorResult<ProgressEvent> };
         const activePromises = new Map<number, Promise<NextResult>>();
-        for (let i = 0; i < iters.length; i++) {
+        // Start at most MAX_CONCURRENT generators to avoid hitting Gemini rate limits
+        // when total batches > MAX_CONCURRENT (e.g. 75 scenes / BATCH_SIZE 4 = 19 batches).
+        for (let i = 0; i < Math.min(MAX_CONCURRENT, iters.length); i++) {
             const p = iters[i].next().then(r => ({ idx: i, result: r }));
             activePromises.set(i, p);
         }
@@ -1379,6 +1411,10 @@ ${promptGenerationInstruction}`;
             if (!winner.result.done) {
                 const p = iters[winner.idx].next().then(r => ({ idx: winner.idx, result: r }));
                 activePromises.set(winner.idx, p);
+            } else if (winner.idx + MAX_CONCURRENT < iters.length) {
+                const nextIdx = winner.idx + MAX_CONCURRENT;
+                const p = iters[nextIdx].next().then(r => ({ idx: nextIdx, result: r }));
+                activePromises.set(nextIdx, p);
             }
         }
     }

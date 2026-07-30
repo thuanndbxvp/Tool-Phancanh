@@ -314,7 +314,20 @@ const App: FC = () => {
           setPrompts(newPrompts);
           saveSession(newPrompts, scriptFileName || "Manual Scenario");
 
-          addToast('success', 'Thành công', `Đã tạo ${newPrompts.length}/${finalResults.totalCount} cảnh bằng ${finalResults.provider} (${finalResults.model}).`);
+          // Detect placeholder scenes (AI returned empty/placeholder content)
+          const placeholderCount = newPrompts.filter((p: any) =>
+              !p.videoPrompt || p.videoPrompt.includes('video placeholder') ||
+              !p.imagePrompt || p.imagePrompt.includes('scene placeholder')
+          ).length;
+
+          if (placeholderCount > 0) {
+              addToast('error',
+                  'Một số cảnh bị thiếu nội dung',
+                  `${placeholderCount}/${newPrompts.length} cảnh không sinh được prompt (có thể do rate limit). Bấm "Tạo prompt hàng loạt" lại hoặc giảm số cảnh.`
+              );
+          } else {
+              addToast('success', 'Thành công', `Đã tạo ${newPrompts.length}/${finalResults.totalCount} cảnh bằng ${finalResults.provider} (${finalResults.model}).`);
+          }
       } catch (error: any) {
           addToast('error', 'Lỗi tạo prompt', error.message);
       } finally {
