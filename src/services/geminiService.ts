@@ -1182,13 +1182,11 @@ ${promptGenerationInstruction}`;
 };
 
 // ========== KHỐI v4 (2-bước): BƯỚC 1 - PURE SCENE SPLIT ==========
-// Chỉ phân chia kịch bản thành các cảnh, KHÔNG gọi AI để sinh prompt.
-// enhanceWithAI được optional, chỉ dùng khi user tick "Chia với AI" ở Manual mode.
+// Chỉ phân chia kịch bản thành các cảnh, KHÔNG gọi AI. Dùng pure timeline + early-cut.
 export const splitScriptToScenes = async (
     script: string,
     targetSceneCount: number,
     audioDuration?: number,
-    enhanceWithAI: boolean = false,
     apiKey: string = '',
     kymaKey: string = '',
     kymaModelName: string = 'gpt-4o-mini'
@@ -1210,43 +1208,7 @@ export const splitScriptToScenes = async (
 
     let segmentedLines: string[] = segmentByTimeline(timelineBlocks, targetSceneCount);
 
-    // 2. OPTIONAL AI ENHANCE (chỉ khi user tick "Chia với AI" + có API key)
-    if (enhanceWithAI && (kymaKey || apiKey)) {
-        try {
-            const scriptText = segmentedLines.map((line, i) => `[Scene ${i + 1}]: ${line}`).join('\n\n');
-            const systemInstruction = `You are a storyboard director. Review the script and adjust the scene boundaries for better semantic flow.
-You MUST return EXACTLY ${targetSceneCount} scenes. Do not change any text content, only move words/sentences between adjacent scenes if it improves the flow.
-Return ONLY a JSON array of strings, where each string is a scene.`;
-
-            if (kymaKey) {
-                const response = await fetch('https://kymaapi.com/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${kymaKey}` },
-                    body: JSON.stringify({
-                        model: kymaModelName,
-                        messages: [
-                            { role: 'system', content: systemInstruction },
-                            { role: 'user', content: scriptText }
-                        ],
-                        temperature: 0.1,
-                    })
-                });
-                const data = await response.json();
-                const text = data?.choices?.[0]?.message?.content || "[]";
-                const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
-                const adjustedScenes: string[] = JSON.parse(cleanJson);
-                if (adjustedScenes.length === targetSceneCount) {
-                    segmentedLines = adjustedScenes;
-                } else {
-                    console.warn(`AI enhance returned ${adjustedScenes.length} scenes (expected ${targetSceneCount}). Using default timeline.`);
-                }
-            }
-        } catch (e) {
-            console.warn("AI enhance failed, using default timeline segment:", e);
-        }
-    }
-
-    // 3. SAFETY NET: đảm bảo đúng targetSceneCount
+    // 2. SAFETY NET: đảm bảo đúng targetSceneCount
     const sentences = tokenizeSentences(script);
     if (segmentedLines.length < targetSceneCount && sentences.length > 0) {
         segmentedLines = ensureSceneCount(segmentedLines, sentences, targetSceneCount);

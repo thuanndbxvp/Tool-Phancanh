@@ -37,8 +37,6 @@ const App: FC = () => {
   //   manual → user nhập SỐ CẢNH (vd 100), chia đều duration / 100
   const [sceneCountMode, setSceneCountMode] = useState<'auto' | 'manual'>('manual');
   const [targetSecs, setTargetSecs] = useState<number>(8);
-  // KHỐI v4: Checkbox "Chia với AI" - chỉ manual mode mới dùng
-  const [enhanceWithAI, setEnhanceWithAI] = useState<boolean>(false);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [enableAspectRatio, setEnableAspectRatio] = useState<boolean>(false);
   const [enableCharacterConsistency, setEnableCharacterConsistency] = useState<boolean>(false);
@@ -207,16 +205,6 @@ const App: FC = () => {
           return;
       }
 
-      // Validate gate: nếu tick "Chia với AI" mà không có key → toast error
-      if (enhanceWithAI) {
-          const activeKeys = apiKeys.filter(k => k.isActive);
-          const hasKey = activeKeys.length > 0 || kymaKey;
-          if (!hasKey) {
-              addToast('error', 'Chưa cấu hình API Key', 'Bạn đã tick "Chia với AI". Vui lòng nhấn nút API góc trên bên phải để nhập Kyma API Key hoặc Gemini API Key.');
-              return;
-          }
-      }
-
       setIsSegmenting(true);
       setBuildProgress(0);
       setBuildStatus('Đang phân cảnh...');
@@ -231,14 +219,13 @@ const App: FC = () => {
               scenario,
               effectiveSceneCount,
               effectiveAudioDuration,
-              enhanceWithAI,
               effectiveKey,
               kymaKey,
               selectedKymaModel || 'deepseek-v4-flash'
           );
 
           setScenes(sceneLines);
-          addToast('success', 'Đã phân cảnh', `Chia thành ${sceneLines.length} cảnh.${enhanceWithAI ? ' (AI enhanced)' : ''} Bấm "Tạo prompt hàng loạt" để sinh prompt.`);
+          addToast('success', 'Đã phân cảnh', `Chia thành ${sceneLines.length} cảnh. Bấm "Tạo prompt hàng loạt" để sinh prompt.`);
       } catch (error: any) {
           addToast('error', 'Lỗi phân cảnh', error.message);
       } finally {
@@ -461,8 +448,6 @@ const App: FC = () => {
                         setTargetSceneCount={setTargetSceneCount}
                         targetSecs={targetSecs}
                         setTargetSecs={setTargetSecs}
-                        enhanceWithAI={enhanceWithAI}
-                        setEnhanceWithAI={setEnhanceWithAI}
                         promptType={promptType}
                         setPromptType={setPromptType}
                         selectedStyleId={selectedStyleId}

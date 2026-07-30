@@ -29,9 +29,6 @@ interface ControlPanelProps {
   setTargetSceneCount: (count: number) => void;
   targetSecs: number;
   setTargetSecs: (secs: number) => void;
-  // KHỐI v4: Checkbox "Chia với AI" - chỉ manual mode
-  enhanceWithAI: boolean;
-  setEnhanceWithAI: (val: boolean) => void;
   promptType: PromptType;
   setPromptType: (type: PromptType) => void;
   selectedStyleId: string;
@@ -60,7 +57,6 @@ export const ControlPanel: FC<ControlPanelProps> = ({
     sceneCountMode, setSceneCountMode,
     targetSceneCount, setTargetSceneCount,
     targetSecs, setTargetSecs,
-    enhanceWithAI, setEnhanceWithAI,
     promptType, setPromptType,
     selectedStyleId, setSelectedStyleId,
     aspectRatio, setAspectRatio,
@@ -390,26 +386,6 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                     </div>
                 )}
             </div>
-
-            {/* KHỐI v4: Checkbox "Chia với AI" - chỉ hiện ở Manual mode */}
-            {sceneCountMode === 'manual' && (
-                <div className="mb-3 p-3 bg-slate-900/60 rounded-lg border border-amber-500/30">
-                    <label className="flex items-start gap-2 text-sm text-slate-200 cursor-pointer">
-                        <input
-                            type="checkbox"
-                            checked={enhanceWithAI}
-                            onChange={(e) => setEnhanceWithAI(e.target.checked)}
-                            className="form-checkbox h-4 w-4 mt-0.5 text-amber-500 rounded bg-slate-700 border-slate-600 focus:ring-amber-500"
-                        />
-                        <span className="flex-1">
-                            <span className="font-semibold">🤖 Chia với AI</span>
-                            <span className="block text-[10px] text-slate-500 leading-tight mt-0.5">
-                                AI review lại ranh giới cảnh cho semantic flow. <span className="text-amber-400">Cần API key (Kyma/Gemini).</span>
-                            </span>
-                        </span>
-                    </label>
-                </div>
-            )}
 
             {/* KHỐI v4: BƯỚC 1 - Phân cảnh (pure timeline, không AI) */}
             <div>
