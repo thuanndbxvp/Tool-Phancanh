@@ -315,10 +315,13 @@ const App: FC = () => {
           saveSession(newPrompts, scriptFileName || "Manual Scenario");
 
           // Detect placeholder scenes (AI returned empty/placeholder content)
-          const placeholderCount = newPrompts.filter((p: any) =>
-              !p.videoPrompt || p.videoPrompt.includes('video placeholder') ||
-              !p.imagePrompt || p.imagePrompt.includes('scene placeholder')
-          ).length;
+          const placeholderCount = newPrompts.filter((p: any) => {
+              if (promptType === 'image') {
+                  return !p.imagePrompt || p.imagePrompt.includes('placeholder');
+              } else {
+                  return !p.videoPrompt || p.videoPrompt.includes('placeholder');
+              }
+          }).length;
 
           if (placeholderCount > 0) {
               addToast('error',
