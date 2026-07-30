@@ -356,10 +356,10 @@ const App: FC = () => {
       }));
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-emerald-500/30">
+    <div className="h-screen bg-slate-950 text-slate-200 font-sans selection:bg-emerald-500/30 flex flex-col overflow-hidden">
         <ToastContainer toasts={toasts} onClose={removeToast} />
-        
-        <ApiSettingsModal 
+
+        <ApiSettingsModal
             isOpen={showApiModal} 
             onClose={() => setShowApiModal(false)}
             apiKeys={apiKeys}
@@ -422,9 +422,9 @@ const App: FC = () => {
             </div>
         </header>
 
-        <main className="max-w-7xl mx-auto px-6 py-8">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                <div className="lg:col-span-4 space-y-6">
+        <main className="flex-1 min-h-0 max-w-7xl mx-auto px-6 py-8 w-full overflow-hidden">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 h-full">
+                <div className="lg:col-span-4 space-y-6 lg:overflow-y-auto lg:pr-2 lg:-mr-2 pb-4">
                     <ControlPanel 
                         mode={mode}
                         setMode={setMode}
@@ -470,7 +470,7 @@ const App: FC = () => {
                     />
                 </div>
 
-                <div className="lg:col-span-8">
+                <div className="lg:col-span-8 lg:overflow-y-auto lg:pr-2 lg:-mr-2 pb-4">
                     {displayItems.length === 0 ? (
                         <WelcomeGuide />
                     ) : (
