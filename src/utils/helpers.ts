@@ -292,3 +292,29 @@ export const calculateOptimalSceneCount = (script: string): number => {
     const optimalCount = Math.round(wordCount / 25);
     return Math.max(1, optimalCount); // At least 1 scene
 };
+
+/**
+ * Tính tổng thời lượng (giây) từ nội dung SRT mà không cần file audio.
+ * Pattern: tìm LAST timestamp dạng "00:01:30,500 --> 00:05:30,000" → lấy end time.
+ * Return undefined nếu không parse được (vd file rỗng/không phải SRT).
+ */
+export const inferSrtDurationSecs = (srtContent: string): number | undefined => {
+    if (!srtContent) return undefined;
+
+    // Find the LAST "-->" entry in the file (last cue's end timestamp)
+    const matches = [...srtContent.matchAll(/(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->/g)];
+    if (matches.length === 0) return undefined;
+
+    // Pattern: mỗi match là "--> HH:MM:SS,mmm", ta cần lấy phần SAU "-->"
+    const lastEntry = matches[matches.length - 1];
+    const afterDash = srtContent.slice(lastEntry.index! + lastEntry[0].length).trim();
+    const endMatch = afterDash.match(/(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/);
+    if (!endMatch) return undefined;
+
+    const hh = parseInt(endMatch[1], 10);
+    const mm = parseInt(endMatch[2], 10);
+    const ss = parseInt(endMatch[3], 10);
+    const ms = parseInt(endMatch[4], 10);
+
+    return hh * 3600 + mm * 60 + ss + ms / 1000;
+};

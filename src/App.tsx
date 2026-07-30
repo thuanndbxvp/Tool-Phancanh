@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, FC } from 'react';
 import { AppMode, PromptType, AspectRatio, ApiKeyData, SavedSession, ScenePrompt, ToastMessage, ToastType } from './types';
-import { exportToExcel, getTimestamp, formatDate } from './utils/helpers';
+import { exportToExcel, getTimestamp, formatDate, inferSrtDurationSecs } from './utils/helpers';
 import { PRESET_STYLES, MODELS } from './utils/constants';
 import { ToastContainer } from './components/Toast';
 import { WelcomeGuide } from './components/WelcomeGuide';
@@ -184,10 +184,29 @@ const App: FC = () => {
           return;
       }
       // KHỐI B (hybrid v2): Validate gate - TXT cần audio hoặc manual duration
+      // SRT tự có timestamp → không cần audio
       if (audioSource === 'txt' && !audioFileName && !audioDuration && !manualAudioDuration) {
           addToast('error', 'Thiếu Audio', 'Kịch bản TXT cần upload file audio hoặc nhập thời lượng voiceover để tính pacing.');
           return;
       }
+
+      // Tính effectiveAudioDuration: ưu tiên manual > audio file > SRT fallback (tính từ timestamp cuối)
+      const srtInferredDuration = (audioSource === 'srt' || scenario.includes('-->'))
+          ? inferSrtDurationSecs(scenario)
+          : undefined;
+      const effectiveAudioDuration = manualAudioDuration ?? audioDuration ?? srtInferredDuration;
+
+      // Tính scene count theo mode
+      let effectiveSceneCount = targetSceneCount;
+      if (sceneCountMode === 'auto' && effectiveAudioDuration && effectiveAudioDuration > 0 && targetSecs > 0) {
+          effectiveSceneCount = calcTargetSceneCount(effectiveAudioDuration, targetSecs);
+          const source = manualAudioDuration ? 'manual' : audioDuration ? 'audio file' : 'SRT timestamp';
+          addToast('info', 'Auto mode', `Tự tính: ${effectiveAudioDuration.toFixed(1)}s / ${targetSecs}s ≈ ${effectiveSceneCount} cảnh (từ ${source}).`);
+      } else if (sceneCountMode === 'auto') {
+          addToast('error', 'Auto mode thiếu data', 'Cần thời lượng để tính số cảnh. Upload audio, nhập duration, hoặc upload file SRT có timestamp hợp lệ (00:00:00,000 --> 00:XX:XX,XXX).');
+          return;
+      }
+
       // Validate gate: nếu tick "Chia với AI" mà không có key → toast error
       if (enhanceWithAI) {
           const activeKeys = apiKeys.filter(k => k.isActive);
@@ -205,18 +224,6 @@ const App: FC = () => {
       setPrompts([]);
 
       try {
-          const effectiveAudioDuration = manualAudioDuration ?? audioDuration;
-
-          // Tính scene count theo mode
-          let effectiveSceneCount = targetSceneCount;
-          if (sceneCountMode === 'auto' && effectiveAudioDuration && effectiveAudioDuration > 0 && targetSecs > 0) {
-              effectiveSceneCount = calcTargetSceneCount(effectiveAudioDuration, targetSecs);
-              addToast('info', 'Auto mode', `Tự tính: ${effectiveAudioDuration}s / ${targetSecs}s ≈ ${effectiveSceneCount} cảnh.`);
-          } else if (sceneCountMode === 'auto') {
-              addToast('error', 'Auto mode thiếu data', 'Cần thời lượng audio để tính số cảnh. Upload audio hoặc nhập duration.');
-              return;
-          }
-
           const activeKeys = apiKeys.filter(k => k.isActive);
           const effectiveKey = activeKeys.map(k => k.key).join(',');
 
