@@ -1308,8 +1308,8 @@ ${promptGenerationInstruction}`;
     }
 
     async function* mergeGenerators() {
-        // Kyma khỏe thì 5, Gemini Free thì 2 để tránh 429
-        const MAX_CONCURRENT = kymaKey ? 5 : 2;
+        // Kyma khỏe thì 5, Gemini Free thì 1 để tránh 429 và block parallel
+        const MAX_CONCURRENT = kymaKey ? 5 : 1;
         const pending: AsyncGenerator<ProgressEvent>[] = generators.map((_, i) => consumeGenerator(i));
         const iters = pending.map(g => g[Symbol.asyncIterator]());
 
@@ -1542,8 +1542,8 @@ ${promptGenerationInstruction}`;
     }
 
     async function* mergeGenerators() {
-        // Kyma khỏe thì 5, Gemini Free thì 2 để tránh 429
-        const MAX_CONCURRENT = kymaKey ? 5 : 2;
+        // Kyma khỏe thì 5, Gemini Free thì 1 để tránh 429 và block parallel
+        const MAX_CONCURRENT = kymaKey ? 5 : 1;
         const pending: AsyncGenerator<ProgressEvent>[] = generators.map((_, i) => consumeGenerator(i));
         const iters = pending.map(g => g[Symbol.asyncIterator]());
 
