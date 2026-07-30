@@ -9,7 +9,7 @@ import { ApiSettingsModal } from './components/modals/ApiSettingsModal';
 import { LibraryModal } from './components/modals/LibraryModal';
 import { GuideModal } from './components/modals/GuideModal';
 import { BookOpenIcon, LibraryIcon, KeyIcon, SparklesIcon, TextDocumentIcon, DownloadIcon } from './components/icons';
-import { analyzeScriptWithAIHybridStream } from './services/geminiService';
+import { splitScriptToScenes, generatePromptsForScenes } from './services/geminiService';
 import { calcTargetSceneCount } from './utils/textSegmentation';
 
 const App: FC = () => {
@@ -19,6 +19,9 @@ const App: FC = () => {
   const [scriptFileName, setScriptFileName] = useState<string | null>(null);
   const [customStylePrompt, setCustomStylePrompt] = useState<string>('');
   const [prompts, setPrompts] = useState<ScenePrompt[]>([]);
+  // KHỐI v4 (2-bước): Kết quả bước 1 - chỉ có scriptLine, chưa có prompt
+  const [scenes, setScenes] = useState<string[]>([]);
+  const [isSegmenting, setIsSegmenting] = useState<boolean>(false);
   const [isBuilding, setIsBuilding] = useState<boolean>(false);
   const [buildProgress, setBuildProgress] = useState<number>(0);
   const [buildStatus, setBuildStatus] = useState<string>('');
@@ -34,6 +37,8 @@ const App: FC = () => {
   //   manual → user nhập SỐ CẢNH (vd 100), chia đều duration / 100
   const [sceneCountMode, setSceneCountMode] = useState<'auto' | 'manual'>('manual');
   const [targetSecs, setTargetSecs] = useState<number>(8);
+  // KHỐI v4: Checkbox "Chia với AI" - chỉ manual mode mới dùng
+  const [enhanceWithAI, setEnhanceWithAI] = useState<boolean>(false);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [enableAspectRatio, setEnableAspectRatio] = useState<boolean>(false);
   const [enableCharacterConsistency, setEnableCharacterConsistency] = useState<boolean>(false);
@@ -170,7 +175,10 @@ const App: FC = () => {
       reader.readAsText(file);
   };
 
-  const handleBuildPrompts = async () => {
+  // ========== KHỐI v4 (2-bước): BƯỚC 1 - PHÂN CẢNH ==========
+  // Auto / Manual đều chạy pure timeline segmentation, KHÔNG cần AI.
+  // Chỉ khi user tick "Chia với AI" (Manual mode) mới gọi AI enhance.
+  const handleSegment = async () => {
       if (!scenario) {
           addToast('error', 'Chưa có kịch bản', 'Vui lòng tải lên file kịch bản (.txt, .srt).');
           return;
@@ -180,77 +188,107 @@ const App: FC = () => {
           addToast('error', 'Thiếu Audio', 'Kịch bản TXT cần upload file audio hoặc nhập thời lượng voiceover để tính pacing.');
           return;
       }
+      // Validate gate: nếu tick "Chia với AI" mà không có key → toast error
+      if (enhanceWithAI) {
+          const activeKeys = apiKeys.filter(k => k.isActive);
+          const hasKey = activeKeys.length > 0 || kymaKey;
+          if (!hasKey) {
+              addToast('error', 'Chưa cấu hình API Key', 'Bạn đã tick "Chia với AI". Vui lòng nhấn nút API góc trên bên phải để nhập Kyma API Key hoặc Gemini API Key.');
+              return;
+          }
+      }
+
+      setIsSegmenting(true);
+      setBuildProgress(0);
+      setBuildStatus('Đang phân cảnh...');
+      setScenes([]);
+      setPrompts([]);
+
+      try {
+          const effectiveAudioDuration = manualAudioDuration ?? audioDuration;
+
+          // Tính scene count theo mode
+          let effectiveSceneCount = targetSceneCount;
+          if (sceneCountMode === 'auto' && effectiveAudioDuration && effectiveAudioDuration > 0 && targetSecs > 0) {
+              effectiveSceneCount = calcTargetSceneCount(effectiveAudioDuration, targetSecs);
+              addToast('info', 'Auto mode', `Tự tính: ${effectiveAudioDuration}s / ${targetSecs}s ≈ ${effectiveSceneCount} cảnh.`);
+          } else if (sceneCountMode === 'auto') {
+              addToast('error', 'Auto mode thiếu data', 'Cần thời lượng audio để tính số cảnh. Upload audio hoặc nhập duration.');
+              return;
+          }
+
+          const activeKeys = apiKeys.filter(k => k.isActive);
+          const effectiveKey = activeKeys.map(k => k.key).join(',');
+
+          const sceneLines = await splitScriptToScenes(
+              scenario,
+              effectiveSceneCount,
+              effectiveAudioDuration,
+              enhanceWithAI,
+              effectiveKey,
+              kymaKey,
+              selectedKymaModel || 'deepseek-v4-flash'
+          );
+
+          setScenes(sceneLines);
+          addToast('success', 'Đã phân cảnh', `Chia thành ${sceneLines.length} cảnh.${enhanceWithAI ? ' (AI enhanced)' : ''} Bấm "Tạo prompt hàng loạt" để sinh prompt.`);
+      } catch (error: any) {
+          addToast('error', 'Lỗi phân cảnh', error.message);
+      } finally {
+          setIsSegmenting(false);
+      }
+  };
+
+  // ========== KHỐI v4 (2-bước): BƯỚC 2 - TẠO PROMPT HÀNG LOẠT ==========
+  // AI bắt buộc ở bước này. Input là scenes[] từ bước 1.
+  const handleGeneratePrompts = async () => {
+      if (scenes.length === 0) {
+          addToast('error', 'Chưa có cảnh', 'Vui lòng bấm "Phân cảnh" trước.');
+          return;
+      }
+      const activeKeys = apiKeys.filter(k => k.isActive);
+      const effectiveKey = activeKeys.map(k => k.key).join(',');
+
+      if (!effectiveKey && !kymaKey) {
+          addToast('error', 'Chưa cấu hình API Key', 'Cần API key để sinh prompt. Vui lòng nhấn nút API góc trên bên phải.');
+          setIsBuilding(false);
+          return;
+      }
+
       setIsBuilding(true);
       setBuildProgress(0);
-      setBuildStatus('Đang khởi tạo...');
-      setPrompts([]); // Clear old prompts for progressive view
+      setBuildStatus('Đang khởi tạo prompt...');
+      setPrompts([]);
       try {
-           const activeKeys = apiKeys.filter(k => k.isActive);
-           let effectiveKey = "";
-
-           if (activeKeys.length > 0) {
-               // Truyền CSV keys để withRetry tự xoay vòng khi gặp 429
-               effectiveKey = activeKeys.map(k => k.key).join(',');
-           }
-           
-           if (!effectiveKey && !kymaKey) {
-               addToast('error', 'Chưa cấu hình API Key', 'Vui lòng nhấn nút API góc trên bên phải để nhập Kyma API Key hoặc Gemini API Key trước khi phân cảnh.');
-               setIsBuilding(false);
-               return;
-           }
-          
-          let refImagesForService: { base64: string; mimeType: string }[] = [];
           let activeStylePrompt = "";
-
           if (selectedStyleId === 'reference') {
-             if (customStylePrompt.trim() !== "") {
-                 activeStylePrompt = "Visual Style: " + customStylePrompt.trim();
-             } else {
-                 activeStylePrompt = "Visual Style: Neutral, realistic, high quality. Visualize the scene based strictly on the script content.";
-             }
+              activeStylePrompt = customStylePrompt.trim() !== ""
+                  ? "Visual Style: " + customStylePrompt.trim()
+                  : "Visual Style: Neutral, realistic, high quality. Visualize the scene based strictly on the script content.";
           } else {
-             const selectedStyleObj = PRESET_STYLES.find(s => s.id === selectedStyleId);
-             activeStylePrompt = selectedStyleObj ? selectedStyleObj.prompt : "";
+              const selectedStyleObj = PRESET_STYLES.find(s => s.id === selectedStyleId);
+              activeStylePrompt = selectedStyleObj ? selectedStyleObj.prompt : "";
           }
 
           const expectedProvider = kymaKey ? 'Kyma' : 'Gemini';
           const expectedModel = kymaKey ? selectedKymaModel || 'deepseek-v4-flash' : selectedModel;
-          addToast('info', 'Đang phân cảnh...', `Sử dụng ${expectedProvider} (${expectedModel}).`);
+          addToast('info', 'Đang sinh prompt...', `Sử dụng ${expectedProvider} (${expectedModel}).`);
 
-          // KHỐI B (hybrid v2): Luôn dùng analyzeScriptWithAIHybridStream, không còn nhánh if/else
-// Manual duration ưu tiên hơn file duration (vì user nhập tay = quyết định cuối cùng)
-const effectiveAudioDuration = manualAudioDuration ?? audioDuration;
-
-// KHỐI plan_2: Auto/Manual mode
-//   auto:   targetSceneCount = calcTargetSceneCount(totalDuration, targetSecs)
-//   manual: targetSceneCount giữ nguyên (user nhập tay)
-let effectiveSceneCount = targetSceneCount;
-if (sceneCountMode === 'auto' && effectiveAudioDuration && effectiveAudioDuration > 0 && targetSecs > 0) {
-    effectiveSceneCount = calcTargetSceneCount(effectiveAudioDuration, targetSecs);
-    addToast('info', 'Auto mode', `Tự tính: ${effectiveAudioDuration}s / ${targetSecs}s ≈ ${effectiveSceneCount} cảnh.`);
-} else if (sceneCountMode === 'auto') {
-    addToast('error', 'Auto mode thiếu data', 'Cần thời lượng audio để tính số cảnh. Upload audio hoặc nhập duration.');
-    setIsBuilding(false);
-    return;
-}
-
-const stream = analyzeScriptWithAIHybridStream(
-          scenario,
-          refImagesForService,
-          effectiveKey,
-          activeStylePrompt,
-          mode,
-          selectedModel,
-          effectiveSceneCount,
-          promptType,
-          aspectRatio,
-          enableAspectRatio,
-          enableCharacterConsistency,
-          kymaKey,
-          selectedKymaModel || 'deepseek-v4-flash',
-          effectiveAudioDuration,
-          false // enhanceWithAI - off (default để nhanh + 0 cost; có thể bật sau nếu cần)
-      );
+          const stream = generatePromptsForScenes(
+              scenes,
+              [],  // referenceImages - chưa dùng
+              effectiveKey,
+              activeStylePrompt,
+              mode,
+              selectedModel,
+              promptType,
+              aspectRatio,
+              enableAspectRatio,
+              enableCharacterConsistency,
+              scenario,  // scriptContext cho character dict
+              kymaKey,
+              selectedKymaModel || 'deepseek-v4-flash'
+          );
 
           let finalResults: { scenes: any[], provider: string, model: string, totalCount: number } | null = null;
           for await (const evt of stream) {
@@ -287,9 +325,8 @@ const stream = analyzeScriptWithAIHybridStream(
           saveSession(newPrompts, scriptFileName || "Manual Scenario");
 
           addToast('success', 'Thành công', `Đã tạo ${newPrompts.length}/${finalResults.totalCount} cảnh bằng ${finalResults.provider} (${finalResults.model}).`);
-          
       } catch (error: any) {
-          addToast('error', 'Lỗi tạo nội dung', error.message);
+          addToast('error', 'Lỗi tạo prompt', error.message);
       } finally {
           setIsBuilding(false);
       }
@@ -389,18 +426,23 @@ const stream = analyzeScriptWithAIHybridStream(
                         customStylePrompt={customStylePrompt}
                         setCustomStylePrompt={setCustomStylePrompt}
                         onScriptUpload={handleScriptUpload}
-                        onBuildPrompts={handleBuildPrompts}
+                        onSegment={handleSegment}
+                        onGeneratePrompts={handleGeneratePrompts}
                         isBuilding={isBuilding}
+                        isSegmenting={isSegmenting}
                         buildProgress={buildProgress}
                         buildStatus={buildStatus}
                         scriptFileName={scriptFileName}
                         hasPrompts={prompts.length > 0}
+                        hasScenes={scenes.length > 0}
                         sceneCountMode={sceneCountMode}
                         setSceneCountMode={setSceneCountMode}
                         targetSceneCount={targetSceneCount}
                         setTargetSceneCount={setTargetSceneCount}
                         targetSecs={targetSecs}
                         setTargetSecs={setTargetSecs}
+                        enhanceWithAI={enhanceWithAI}
+                        setEnhanceWithAI={setEnhanceWithAI}
                         promptType={promptType}
                         setPromptType={setPromptType}
                         selectedStyleId={selectedStyleId}

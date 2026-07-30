@@ -12,14 +12,16 @@ interface ControlPanelProps {
   customStylePrompt: string;
   setCustomStylePrompt: (value: string) => void;
   onScriptUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onBuildPrompts: () => void;
+  // KHỐI v4 (2-bước): 2 handler riêng
+  onSegment: () => void;
+  onGeneratePrompts: () => void;
   isBuilding: boolean;
+  isSegmenting: boolean;
   buildProgress: number;
   buildStatus: string;
   scriptFileName: string | null;
-  segmentationMode: 'ai' | 'punctuation' | 'fixed';
-  setSegmentationMode: (mode: 'ai' | 'punctuation' | 'fixed') => void;
   hasPrompts: boolean;
+  hasScenes: boolean;
   // KHỐI plan_2: Auto/Manual mode
   sceneCountMode: 'auto' | 'manual';
   setSceneCountMode: (mode: 'auto' | 'manual') => void;
@@ -27,6 +29,9 @@ interface ControlPanelProps {
   setTargetSceneCount: (count: number) => void;
   targetSecs: number;
   setTargetSecs: (secs: number) => void;
+  // KHỐI v4: Checkbox "Chia với AI" - chỉ manual mode
+  enhanceWithAI: boolean;
+  setEnhanceWithAI: (val: boolean) => void;
   promptType: PromptType;
   setPromptType: (type: PromptType) => void;
   selectedStyleId: string;
@@ -49,12 +54,13 @@ interface ControlPanelProps {
 
 export const ControlPanel: FC<ControlPanelProps> = ({
     mode, setMode, scenario, setScenario, customStylePrompt, setCustomStylePrompt,
-    onScriptUpload, onBuildPrompts, isBuilding, buildProgress, buildStatus,
+    onScriptUpload, onSegment, onGeneratePrompts, isBuilding, isSegmenting, buildProgress, buildStatus,
     scriptFileName,
-    hasPrompts,
+    hasPrompts, hasScenes,
     sceneCountMode, setSceneCountMode,
     targetSceneCount, setTargetSceneCount,
     targetSecs, setTargetSecs,
+    enhanceWithAI, setEnhanceWithAI,
     promptType, setPromptType,
     selectedStyleId, setSelectedStyleId,
     aspectRatio, setAspectRatio,
@@ -385,29 +391,77 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                 )}
             </div>
 
+            {/* KHỐI v4: Checkbox "Chia với AI" - chỉ hiện ở Manual mode */}
+            {sceneCountMode === 'manual' && (
+                <div className="mb-3 p-3 bg-slate-900/60 rounded-lg border border-amber-500/30">
+                    <label className="flex items-start gap-2 text-sm text-slate-200 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={enhanceWithAI}
+                            onChange={(e) => setEnhanceWithAI(e.target.checked)}
+                            className="form-checkbox h-4 w-4 mt-0.5 text-amber-500 rounded bg-slate-700 border-slate-600 focus:ring-amber-500"
+                        />
+                        <span className="flex-1">
+                            <span className="font-semibold">🤖 Chia với AI</span>
+                            <span className="block text-[10px] text-slate-500 leading-tight mt-0.5">
+                                AI review lại ranh giới cảnh cho semantic flow. <span className="text-amber-400">Cần API key (Kyma/Gemini).</span>
+                            </span>
+                        </span>
+                    </label>
+                </div>
+            )}
+
+            {/* KHỐI v4: BƯỚC 1 - Phân cảnh (pure timeline, không AI) */}
             <div>
                 <button
-                    onClick={onBuildPrompts}
-                    disabled={!canBuild || isBuilding}
-                    className={`relative w-full overflow-hidden py-3 px-4 rounded-md font-semibold transition-all flex items-center justify-center text-white ${hasPrompts ? 'bg-amber-600 hover:bg-amber-500' : 'bg-blue-600 hover:bg-blue-500'} disabled:bg-slate-700 disabled:text-slate-300 disabled:cursor-not-allowed shadow-lg`}
+                    onClick={onSegment}
+                    disabled={!canBuild || isSegmenting || isBuilding}
+                    className={`relative w-full overflow-hidden py-3 px-4 rounded-md font-semibold transition-all flex items-center justify-center text-white ${hasScenes ? 'bg-amber-600 hover:bg-amber-500' : 'bg-blue-600 hover:bg-blue-500'} disabled:bg-slate-700 disabled:text-slate-300 disabled:cursor-not-allowed shadow-lg`}
                 >
-                    {isBuilding && (
-                        <div 
-                            className="absolute left-0 top-0 bottom-0 bg-emerald-600/40 transition-all duration-300 ease-out" 
+                    {isSegmenting && (
+                        <div
+                            className="absolute left-0 top-0 bottom-0 bg-emerald-600/40 transition-all duration-300 ease-out"
                             style={{ width: `${buildProgress}%` }}
                         />
                     )}
                     <div className="relative z-10 flex items-center gap-2">
-                        {isBuilding ? <SpinnerIcon className="animate-spin h-5 w-5" /> : hasPrompts ? <ArrowPathIcon className="h-5 w-5" /> : null}
-                        {isBuilding ? `${buildStatus || 'AI đang phân tích...'} (${formatTime(elapsedSeconds)})` : hasPrompts ? 'Tạo lại Storyboard Pro' : 'Tạo Storyboard Pro'}
+                        {isSegmenting ? <SpinnerIcon className="animate-spin h-5 w-5" /> : hasScenes ? <ArrowPathIcon className="h-5 w-5" /> : null}
+                        {isSegmenting ? `${buildStatus || 'Đang phân cảnh...'} (${formatTime(elapsedSeconds)})` : hasScenes ? 'Phân cảnh lại' : '✂️ Phân cảnh'}
                     </div>
                 </button>
-                {isBuilding && buildProgress > 0 && (
+                {isSegmenting && buildProgress > 0 && (
                     <div className="mt-2 text-center text-xs text-emerald-400 font-medium animate-pulse">
                         Đang tiến hành... {buildProgress}%
                     </div>
                 )}
             </div>
+
+            {/* KHỐI v4: BƯỚC 2 - Tạo prompt hàng loạt (AI bắt buộc) */}
+            {hasScenes && (
+                <div>
+                    <button
+                        onClick={onGeneratePrompts}
+                        disabled={!hasScenes || isBuilding || isSegmenting}
+                        className={`relative w-full overflow-hidden py-3 px-4 rounded-md font-semibold transition-all flex items-center justify-center text-white ${hasPrompts ? 'bg-purple-600 hover:bg-purple-500' : 'bg-emerald-600 hover:bg-emerald-500'} disabled:bg-slate-700 disabled:text-slate-300 disabled:cursor-not-allowed shadow-lg`}
+                    >
+                        {isBuilding && (
+                            <div
+                                className="absolute left-0 top-0 bottom-0 bg-emerald-600/40 transition-all duration-300 ease-out"
+                                style={{ width: `${buildProgress}%` }}
+                            />
+                        )}
+                        <div className="relative z-10 flex items-center gap-2">
+                            {isBuilding ? <SpinnerIcon className="animate-spin h-5 w-5" /> : hasPrompts ? <ArrowPathIcon className="h-5 w-5" /> : null}
+                            {isBuilding ? `${buildStatus || 'AI đang sinh prompt...'} (${formatTime(elapsedSeconds)})` : hasPrompts ? 'Tạo lại prompt' : '🤖 Tạo prompt hàng loạt'}
+                        </div>
+                    </button>
+                    {isBuilding && buildProgress > 0 && (
+                        <div className="mt-2 text-center text-xs text-emerald-400 font-medium animate-pulse">
+                            Đang tiến hành... {buildProgress}%
+                        </div>
+                    )}
+                </div>
+            )}
           </div>
       </div>
     </div>
