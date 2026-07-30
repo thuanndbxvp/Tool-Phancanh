@@ -35,7 +35,7 @@ const App: FC = () => {
   // KHỐI plan_2: Auto/Manual mode cho phân cảnh
   //   auto   → user nhập số GIÂY mỗi cảnh (vd 8s), tự tính scenes = totalDuration / secs
   //   manual → user nhập SỐ CẢNH (vd 100), chia đều duration / 100
-  const [sceneCountMode, setSceneCountMode] = useState<'auto' | 'manual'>('manual');
+  const [sceneCountMode, setSceneCountMode] = useState<'auto' | 'manual'>('auto');
   const [targetSecs, setTargetSecs] = useState<number>(8);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [enableAspectRatio, setEnableAspectRatio] = useState<boolean>(false);
