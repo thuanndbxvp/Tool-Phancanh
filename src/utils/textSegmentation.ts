@@ -291,3 +291,21 @@ export const segmentByTimeline = (timeline: TimelineBlock[], targetSceneCount: n
 
     return scenes;
 };
+
+// KHỐI plan_2: Auto mode - nhập số giây/cảnh trực tiếp
+// Overload: thay vì truyền count → user truyền target secs (vd 8s)
+export const segmentByTimelineBySecs = (timeline: TimelineBlock[], targetSecs: number): string[] => {
+    if (timeline.length === 0) return [];
+    if (targetSecs <= 0) return [timeline.map(b => b.text).join(' ')];
+
+    // Tính ngược: số scenes mục tiêu dựa trên total duration / target secs
+    const totalDuration = timeline[timeline.length - 1].endTime;
+    const targetSceneCount = calcTargetSceneCount(totalDuration, targetSecs);
+    return segmentByTimeline(timeline, targetSceneCount);
+};
+
+// Helper cho App.tsx: tính số cảnh từ duration + target secs (Auto mode)
+export const calcTargetSceneCount = (totalDurationSecs: number, targetSecsPerScene: number): number => {
+    if (targetSecsPerScene <= 0) return 1;
+    return Math.max(1, Math.round(totalDurationSecs / targetSecsPerScene));
+};

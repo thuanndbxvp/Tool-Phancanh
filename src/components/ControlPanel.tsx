@@ -20,8 +20,13 @@ interface ControlPanelProps {
   segmentationMode: 'ai' | 'punctuation' | 'fixed';
   setSegmentationMode: (mode: 'ai' | 'punctuation' | 'fixed') => void;
   hasPrompts: boolean;
+  // KHỐI plan_2: Auto/Manual mode
+  sceneCountMode: 'auto' | 'manual';
+  setSceneCountMode: (mode: 'auto' | 'manual') => void;
   targetSceneCount: number;
   setTargetSceneCount: (count: number) => void;
+  targetSecs: number;
+  setTargetSecs: (secs: number) => void;
   promptType: PromptType;
   setPromptType: (type: PromptType) => void;
   selectedStyleId: string;
@@ -36,6 +41,7 @@ interface ControlPanelProps {
   // KHỐI B (hybrid v2): Audio input
   audioSource: 'srt' | 'txt';
   audioFileName?: string | null;
+  audioDuration?: number;
   onAudioUpload?: (duration: number | undefined, name: string | null) => void;
   manualAudioDuration?: number;
   onManualDurationChange?: (val: number | undefined) => void;
@@ -46,14 +52,16 @@ export const ControlPanel: FC<ControlPanelProps> = ({
     onScriptUpload, onBuildPrompts, isBuilding, buildProgress, buildStatus,
     scriptFileName,
     hasPrompts,
+    sceneCountMode, setSceneCountMode,
     targetSceneCount, setTargetSceneCount,
+    targetSecs, setTargetSecs,
     promptType, setPromptType,
     selectedStyleId, setSelectedStyleId,
     aspectRatio, setAspectRatio,
     enableAspectRatio, setEnableAspectRatio,
     enableCharacterConsistency, setEnableCharacterConsistency,
     selectedModel,
-    audioSource, audioFileName, onAudioUpload, manualAudioDuration, onManualDurationChange
+    audioSource, audioFileName, onAudioUpload, audioDuration, manualAudioDuration, onManualDurationChange
 }) => {
   const scriptFileRef = useRef<HTMLInputElement>(null);
   const [isCustomStyleExpanded, setIsCustomStyleExpanded] = useState(false);
@@ -258,25 +266,70 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                     ✂️ Phân cảnh thông minh (Smart Hybrid Timeline)
                 </label>
 
-                {/* Target scenes input */}
+                {/* KHỐI plan_2: Auto/Manual mode radio + dynamic input */}
                 <div className="mb-3 p-3 bg-slate-900 border border-emerald-500/40 rounded-lg">
-                    <label className="text-[10px] font-bold text-slate-400 mb-1 uppercase block text-center">
-                        Số lượng cảnh mong muốn
-                    </label>
-                    <input
-                        type="number"
-                        min="1"
-                        max="500"
-                        value={targetSceneCount}
-                        onChange={(e) => setTargetSceneCount(Math.max(1, parseInt(e.target.value) || 1))}
-                        className="w-full bg-slate-800 border border-slate-700 p-1.5 rounded text-center text-white text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
-                    />
-                    {scenario.length > 50 && (
-                        <div className="mt-2 text-[10px] text-amber-500/80 leading-tight text-center">
-                            💡 Gợi ý (chuẩn Video 8s): <br/>
-                            <span className="font-bold text-emerald-400 cursor-pointer hover:underline" onClick={() => setTargetSceneCount(optimalSceneCount)}>
-                                ~{optimalSceneCount} cảnh (Bấm để gán)
-                            </span>
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                        <label className={`flex items-center justify-center gap-1 p-2 rounded-lg cursor-pointer border transition-all text-xs font-semibold ${sceneCountMode === 'auto' ? 'bg-emerald-700 border-emerald-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
+                            <input
+                                type="radio"
+                                name="sceneCountMode"
+                                checked={sceneCountMode === 'auto'}
+                                onChange={() => setSceneCountMode('auto')}
+                                className="form-radio h-3 w-3 text-emerald-500 bg-slate-700 border-slate-600 focus:ring-emerald-500"
+                            />
+                            <span>⏱ Auto</span>
+                        </label>
+                        <label className={`flex items-center justify-center gap-1 p-2 rounded-lg cursor-pointer border transition-all text-xs font-semibold ${sceneCountMode === 'manual' ? 'bg-emerald-700 border-emerald-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
+                            <input
+                                type="radio"
+                                name="sceneCountMode"
+                                checked={sceneCountMode === 'manual'}
+                                onChange={() => setSceneCountMode('manual')}
+                                className="form-radio h-3 w-3 text-emerald-500 bg-slate-700 border-slate-600 focus:ring-emerald-500"
+                            />
+                            <span>🎯 Manual</span>
+                        </label>
+                    </div>
+
+                    {sceneCountMode === 'auto' ? (
+                        <div>
+                            <label className="text-[10px] font-bold text-slate-400 mb-1 uppercase block text-center">
+                                Số giây mỗi cảnh
+                            </label>
+                            <input
+                                type="number"
+                                min="1"
+                                max="60"
+                                step="0.5"
+                                value={targetSecs}
+                                onChange={(e) => setTargetSecs(Math.max(0.5, parseFloat(e.target.value) || 1))}
+                                className="w-full bg-slate-800 border border-slate-700 p-1.5 rounded text-center text-white text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
+                            />
+                            <p className="mt-1 text-[10px] text-slate-500 leading-tight text-center">
+                                Hệ thống tự tính: <span className="text-emerald-400 font-bold">{(manualAudioDuration ?? audioDuration ?? 0).toFixed(0)}s ÷ {targetSecs}s ≈ {((manualAudioDuration ?? audioDuration ?? 0) > 0 ? Math.round((manualAudioDuration ?? audioDuration ?? 0) / targetSecs) : '?')}</span> cảnh
+                            </p>
+                        </div>
+                    ) : (
+                        <div>
+                            <label className="text-[10px] font-bold text-slate-400 mb-1 uppercase block text-center">
+                                Số lượng cảnh mong muốn
+                            </label>
+                            <input
+                                type="number"
+                                min="1"
+                                max="500"
+                                value={targetSceneCount}
+                                onChange={(e) => setTargetSceneCount(Math.max(1, parseInt(e.target.value) || 1))}
+                                className="w-full bg-slate-800 border border-slate-700 p-1.5 rounded text-center text-white text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
+                            />
+                            {scenario.length > 50 && (
+                                <div className="mt-2 text-[10px] text-amber-500/80 leading-tight text-center">
+                                    💡 Gợi ý (chuẩn Video 8s): <br/>
+                                    <span className="font-bold text-emerald-400 cursor-pointer hover:underline" onClick={() => setTargetSceneCount(optimalSceneCount)}>
+                                        ~{optimalSceneCount} cảnh (Bấm để gán)
+                                    </span>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>

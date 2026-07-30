@@ -10,6 +10,7 @@ import { LibraryModal } from './components/modals/LibraryModal';
 import { GuideModal } from './components/modals/GuideModal';
 import { BookOpenIcon, LibraryIcon, KeyIcon, SparklesIcon, TextDocumentIcon, DownloadIcon } from './components/icons';
 import { analyzeScriptWithAIHybridStream } from './services/geminiService';
+import { calcTargetSceneCount } from './utils/textSegmentation';
 
 const App: FC = () => {
   // State
@@ -28,6 +29,11 @@ const App: FC = () => {
   const [audioDuration, setAudioDuration] = useState<number | undefined>(undefined);
   const [audioFileName, setAudioFileName] = useState<string | null>(null);
   const [manualAudioDuration, setManualAudioDuration] = useState<number | undefined>(undefined);
+  // KHỐI plan_2: Auto/Manual mode cho phân cảnh
+  //   auto   → user nhập số GIÂY mỗi cảnh (vd 8s), tự tính scenes = totalDuration / secs
+  //   manual → user nhập SỐ CẢNH (vd 100), chia đều duration / 100
+  const [sceneCountMode, setSceneCountMode] = useState<'auto' | 'manual'>('manual');
+  const [targetSecs, setTargetSecs] = useState<number>(8);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [enableAspectRatio, setEnableAspectRatio] = useState<boolean>(false);
   const [enableCharacterConsistency, setEnableCharacterConsistency] = useState<boolean>(false);
@@ -214,6 +220,20 @@ const App: FC = () => {
           // KHỐI B (hybrid v2): Luôn dùng analyzeScriptWithAIHybridStream, không còn nhánh if/else
 // Manual duration ưu tiên hơn file duration (vì user nhập tay = quyết định cuối cùng)
 const effectiveAudioDuration = manualAudioDuration ?? audioDuration;
+
+// KHỐI plan_2: Auto/Manual mode
+//   auto:   targetSceneCount = calcTargetSceneCount(totalDuration, targetSecs)
+//   manual: targetSceneCount giữ nguyên (user nhập tay)
+let effectiveSceneCount = targetSceneCount;
+if (sceneCountMode === 'auto' && effectiveAudioDuration && effectiveAudioDuration > 0 && targetSecs > 0) {
+    effectiveSceneCount = calcTargetSceneCount(effectiveAudioDuration, targetSecs);
+    addToast('info', 'Auto mode', `Tự tính: ${effectiveAudioDuration}s / ${targetSecs}s ≈ ${effectiveSceneCount} cảnh.`);
+} else if (sceneCountMode === 'auto') {
+    addToast('error', 'Auto mode thiếu data', 'Cần thời lượng audio để tính số cảnh. Upload audio hoặc nhập duration.');
+    setIsBuilding(false);
+    return;
+}
+
 const stream = analyzeScriptWithAIHybridStream(
           scenario,
           refImagesForService,
@@ -221,7 +241,7 @@ const stream = analyzeScriptWithAIHybridStream(
           activeStylePrompt,
           mode,
           selectedModel,
-          targetSceneCount,
+          effectiveSceneCount,
           promptType,
           aspectRatio,
           enableAspectRatio,
@@ -375,8 +395,12 @@ const stream = analyzeScriptWithAIHybridStream(
                         buildStatus={buildStatus}
                         scriptFileName={scriptFileName}
                         hasPrompts={prompts.length > 0}
+                        sceneCountMode={sceneCountMode}
+                        setSceneCountMode={setSceneCountMode}
                         targetSceneCount={targetSceneCount}
                         setTargetSceneCount={setTargetSceneCount}
+                        targetSecs={targetSecs}
+                        setTargetSecs={setTargetSecs}
                         promptType={promptType}
                         setPromptType={setPromptType}
                         selectedStyleId={selectedStyleId}
