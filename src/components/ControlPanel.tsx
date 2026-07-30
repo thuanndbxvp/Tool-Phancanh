@@ -265,7 +265,7 @@ export const ControlPanel: FC<ControlPanelProps> = ({
             {/* KHỐI B (hybrid v2): Smart Hybrid - 1 luồng duy nhất, cần audio nếu upload TXT */}
             <div className="mb-4 p-4 bg-slate-900/60 rounded-xl border border-indigo-500/30">
                 <label className="block text-sm font-semibold text-slate-200 mb-3">
-                    ✂️ Phân cảnh thông minh (Smart Hybrid Timeline)
+                    ✂️ Phân cảnh thông minh
                 </label>
 
                 {/* KHỐI plan_2: Auto/Manual mode radio + dynamic input */}
