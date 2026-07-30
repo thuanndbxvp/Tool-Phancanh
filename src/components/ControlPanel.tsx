@@ -1,5 +1,5 @@
 import React, { FC, useRef, useMemo, useState, useEffect } from 'react';
-import { AppMode, PromptType, AspectRatio } from '../types';
+import { AppMode, PromptType } from '../types';
 import { PRESET_STYLES } from '../utils/constants';
 import { calculateOptimalSceneCount } from '../utils/helpers';
 import { ChevronDownIcon, ChevronUpIcon, DocumentIcon, PhotoIcon, VideoCameraIcon, SpinnerIcon, ArrowPathIcon, InformationCircleIcon } from './icons';
@@ -33,10 +33,6 @@ interface ControlPanelProps {
   setPromptType: (type: PromptType) => void;
   selectedStyleId: string;
   setSelectedStyleId: (id: string) => void;
-  aspectRatio: AspectRatio;
-  setAspectRatio: (ratio: AspectRatio) => void;
-  enableAspectRatio: boolean;
-  setEnableAspectRatio: (enable: boolean) => void;
   enableCharacterConsistency: boolean;
   setEnableCharacterConsistency: (enable: boolean) => void;
   selectedModel: string;
@@ -59,8 +55,6 @@ export const ControlPanel: FC<ControlPanelProps> = ({
     targetSecs, setTargetSecs,
     promptType, setPromptType,
     selectedStyleId, setSelectedStyleId,
-    aspectRatio, setAspectRatio,
-    enableAspectRatio, setEnableAspectRatio,
     enableCharacterConsistency, setEnableCharacterConsistency,
     selectedModel,
     audioSource, audioFileName, onAudioUpload, audioDuration, manualAudioDuration, onManualDurationChange
@@ -203,47 +197,12 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                     </button>
                 </div>
                 
-                {/* Aspect Ratio Buttons */}
-                <div className="flex items-center gap-2 mb-2">
-                    <input 
-                        type="checkbox" 
-                        id="enableAspectRatio" 
-                        checked={enableAspectRatio}
-                        onChange={(e) => setEnableAspectRatio(e.target.checked)}
-                        className="w-4 h-4 text-emerald-500 bg-slate-800 border-slate-600 rounded focus:ring-emerald-500 focus:ring-2"
-                    />
-                    <label htmlFor="enableAspectRatio" className="text-sm font-medium text-slate-300 cursor-pointer">
-                        Chỉ định khuôn hình trong prompt output
-                    </label>
-                </div>
-                {enableAspectRatio && (
-                    <div className="flex gap-2 mb-4 animate-fade-in">
-                        <button
-                            onClick={() => setAspectRatio('16:9')}
-                            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all border ${aspectRatio === '16:9' ? 'bg-slate-700 border-emerald-500 text-emerald-400 shadow-sm' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'}`}
-                        >
-                            16:9 (Ngang)
-                        </button>
-                        <button
-                            onClick={() => setAspectRatio('9:16')}
-                            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all border ${aspectRatio === '9:16' ? 'bg-slate-700 border-emerald-500 text-emerald-400 shadow-sm' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'}`}
-                        >
-                            9:16 (Dọc)
-                        </button>
-                        <button
-                            onClick={() => setAspectRatio('1:1')}
-                            className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-all border ${aspectRatio === '1:1' ? 'bg-slate-700 border-emerald-500 text-emerald-400 shadow-sm' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'}`}
-                        >
-                            1:1 (Vuông)
-                        </button>
-                    </div>
-                )}
-
+                {/* Character Consistency */}
                 <div className="flex flex-col mb-2">
                     <div className="flex items-center gap-2">
-                        <input 
-                            type="checkbox" 
-                            id="enableCharacterConsistency" 
+                        <input
+                            type="checkbox"
+                            id="enableCharacterConsistency"
                             checked={enableCharacterConsistency}
                             onChange={(e) => setEnableCharacterConsistency(e.target.checked)}
                             className="w-4 h-4 text-emerald-500 bg-slate-800 border-slate-600 rounded focus:ring-emerald-500 focus:ring-2"

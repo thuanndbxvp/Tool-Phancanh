@@ -28,7 +28,6 @@ export interface SavedSession {
 
 export type AppMode = 'general';
 export type PromptType = 'image' | 'video';
-export type AspectRatio = '16:9' | '9:16' | '1:1';
 
 export type ToastType = 'success' | 'error' | 'info';
 

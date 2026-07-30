@@ -510,8 +510,6 @@ export const analyzeScriptWithAI = async (
     modelName: string = "gemini-2.5-flash",
     targetSceneCount: number = 10,
     promptType: 'image' | 'video' = 'image',
-    aspectRatio: string = '16:9',
-    enableAspectRatio: boolean = false,
     enableCharacterConsistency: boolean = false,
     kymaKey?: string,
     kymaModelName: string = "gpt-4o-mini",
@@ -610,21 +608,14 @@ export const analyzeScriptWithAI = async (
     const commonStyleInjection = `   - **STYLE INJECTION**: Analyze the attached Reference Images (if any). Extract their art style (e.g., color palette, lighting key, texture, rendering style) and apply it to the scene description.`;
 
     if (promptType === 'image') {
-        const aspectRatioInstruction = enableAspectRatio ? `\n   - **ASPECT RATIO**: Output MUST include the aspect ratio parameter "--ar ${aspectRatio}" at the very end of the prompt.` : "";
         promptGenerationInstruction = `2. "imagePrompt": A self-contained, highly detailed visual description for a static image, optimized for Google Nano Banana (Gemini Image Models).
 ${commonStyleInjection}
-   - **NO PARAMETERS**: Do not use Midjourney parameters (like --v 6.0, --ar 16:9). Use natural, descriptive English only.${aspectRatioInstruction}${characterDictionaryStr}
+   - **NO PARAMETERS**: Do not use Midjourney parameters (like --v 6.0, --ar 16:9). Use natural, descriptive English only.${characterDictionaryStr}
    - **VISUAL FIDELITY**: Focus on soft lighting, rich textures, and a clean composition suitable for the "Nano Banana" model (high adherence to prompt).
    - **ACTION & MOOD**: Describe the scene action and atmosphere vividly based on the script context.`;
     } else {
-        let videoRatioDesc = "Widescreen cinematic";
-        if (aspectRatio === '9:16') videoRatioDesc = "Vertical full-screen mobile";
-        if (aspectRatio === '1:1') videoRatioDesc = "Square format";
-        
-        const aspectRatioInstruction = enableAspectRatio ? `\n   - **ASPECT RATIO & FRAMING**: Composition must be ${videoRatioDesc} (${aspectRatio}). Frame the subject accordingly.` : "";
-
         promptGenerationInstruction = `2. "videoPrompt": A highly detailed video generation prompt optimized for Google Veo 3 (approx 8 seconds).
-${commonStyleInjection}${aspectRatioInstruction}${characterDictionaryStr}
+${commonStyleInjection}${characterDictionaryStr}
    - **VISUAL NARRATIVE**: Describe the continuous motion, physics, and changes within the clip.
    - **CAMERA & CINEMATOGRAPHY**: Specify camera movement (e.g., "Slow tracking shot", "Drone view", "Static camera with subtle subject motion", "Rack focus").
    - **CHARACTER & ACTION**: Describe fluid movements based on the script.
@@ -700,8 +691,6 @@ export const analyzeScriptWithAIStream = async function* (
     modelName: string = "gemini-2.5-flash",
     targetSceneCount: number = 10,
     promptType: 'image' | 'video' = 'image',
-    aspectRatio: string = '16:9',
-    enableAspectRatio: boolean = false,
     enableCharacterConsistency: boolean = false,
     kymaKey?: string,
     kymaModelName: string = "gpt-4o-mini"
@@ -792,7 +781,7 @@ export const analyzeScriptWithAIStream = async function* (
 
     // 2. CONSTRUCT PROMPT INSTRUCTIONS
     const promptGenerationInstruction = promptGenerationInstruction_for_stream(
-        promptType, styleLock, aspectRatio, enableAspectRatio, characterDictionaryStr
+        promptType, styleLock, characterDictionaryStr
     );
 
     const batchSystemInstruction = `You are a professional storyboard artist and script analyst.
@@ -936,28 +925,19 @@ ${promptGenerationInstruction}`;
 const promptGenerationInstruction_for_stream = (
     promptType: 'image' | 'video',
     styleLock: string,
-    aspectRatio: string,
-    enableAspectRatio: boolean,
     characterDictionaryStr: string
 ): string => {
     const commonStyleInjection = `   - **STYLE INJECTION**: Analyze the attached Reference Images (if any). Extract their art style (e.g., color palette, lighting key, texture, rendering style) and apply it to the scene description.`;
 
     if (promptType === 'image') {
-        const aspectRatioInstruction = enableAspectRatio ? `\n   - **ASPECT RATIO**: Output MUST include the aspect ratio parameter "--ar ${aspectRatio}" at the very end of the prompt.` : "";
         return `2. "imagePrompt": A self-contained, highly detailed visual description for a static image, optimized for Google Nano Banana (Gemini Image Models).
 ${commonStyleInjection}
-   - **NO PARAMETERS**: Do not use Midjourney parameters (like --v 6.0, --ar 16:9). Use natural, descriptive English only.${aspectRatioInstruction}${characterDictionaryStr}
+   - **NO PARAMETERS**: Do not use Midjourney parameters (like --v 6.0, --ar 16:9). Use natural, descriptive English only.${characterDictionaryStr}
    - **VISUAL FIDELITY**: Focus on soft lighting, rich textures, and a clean composition suitable for the "Nano Banana" model (high adherence to prompt).
    - **ACTION & MOOD**: Describe the scene action and atmosphere vividly based on the script context.`;
     } else {
-        let videoRatioDesc = "Widescreen cinematic";
-        if (aspectRatio === '9:16') videoRatioDesc = "Vertical full-screen mobile";
-        if (aspectRatio === '1:1') videoRatioDesc = "Square format";
-
-        const aspectRatioInstruction = enableAspectRatio ? `\n   - **ASPECT RATIO & FRAMING**: Composition must be ${videoRatioDesc} (${aspectRatio}). Frame the subject accordingly.` : "";
-
         return `2. "videoPrompt": A highly detailed video generation prompt optimized for Google Veo 3 (approx 8 seconds).
-${commonStyleInjection}${aspectRatioInstruction}${characterDictionaryStr}
+${commonStyleInjection}${characterDictionaryStr}
    - **VISUAL NARRATIVE**: Describe the continuous motion, physics, and changes within the clip.
    - **CAMERA & CINEMATOGRAPHY**: Specify camera movement (e.g., "Slow tracking shot", "Drone view", "Static camera with subtle subject motion", "Rack focus").
    - **CHARACTER & ACTION**: Describe fluid movements based on the script.
@@ -976,8 +956,6 @@ export const analyzeScriptWithAIHybridStream = async function* (
     modelName: string = "gemini-2.5-flash",
     targetSceneCount: number = 10,
     promptType: 'image' | 'video' = 'image',
-    aspectRatio: string = '16:9',
-    enableAspectRatio: boolean = false,
     enableCharacterConsistency: boolean = false,
     kymaKey?: string,
     kymaModelName: string = "gpt-4o-mini",
@@ -1100,7 +1078,7 @@ Return ONLY a JSON array of strings, where each string is a scene.`;
 
     // 2. CONSTRUCT PROMPT INSTRUCTIONS
     const promptGenerationInstruction = promptGenerationInstruction_for_stream(
-        promptType, styleLock, aspectRatio, enableAspectRatio, characterDictionaryStr
+        promptType, styleLock, characterDictionaryStr
     );
 
     const batchSystemInstruction = `You are a professional storyboard artist and script analyst.
@@ -1272,8 +1250,6 @@ export const generatePromptsForScenes = async function* (
     mode: string,
     modelName: string = 'gemini-2.5-flash',
     promptType: 'image' | 'video' = 'image',
-    aspectRatio: string = '16:9',
-    enableAspectRatio: boolean = false,
     enableCharacterConsistency: boolean = false,
     scriptContext: string = '',
     kymaKey?: string,
@@ -1314,7 +1290,7 @@ export const generatePromptsForScenes = async function* (
 
     // 2. CONSTRUCT PROMPT INSTRUCTIONS
     const promptGenerationInstruction = promptGenerationInstruction_for_stream(
-        promptType, styleLock, aspectRatio, enableAspectRatio, characterDictionaryStr
+        promptType, styleLock, characterDictionaryStr
     );
 
     const batchSystemInstruction = `You are a professional storyboard artist and script analyst.

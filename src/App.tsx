@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, FC } from 'react';
-import { AppMode, PromptType, AspectRatio, ApiKeyData, SavedSession, ScenePrompt, ToastMessage, ToastType } from './types';
+import { AppMode, PromptType, ApiKeyData, SavedSession, ScenePrompt, ToastMessage, ToastType } from './types';
 import { exportToExcel, getTimestamp, formatDate, inferSrtDurationSecs } from './utils/helpers';
 import { PRESET_STYLES, MODELS } from './utils/constants';
 import { ToastContainer } from './components/Toast';
@@ -37,8 +37,6 @@ const App: FC = () => {
   //   manual → user nhập SỐ CẢNH (vd 100), chia đều duration / 100
   const [sceneCountMode, setSceneCountMode] = useState<'auto' | 'manual'>('auto');
   const [targetSecs, setTargetSecs] = useState<number>(8);
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
-  const [enableAspectRatio, setEnableAspectRatio] = useState<boolean>(false);
   const [enableCharacterConsistency, setEnableCharacterConsistency] = useState<boolean>(false);
   const [selectedStyleId, setSelectedStyleId] = useState<string>('reference');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -276,8 +274,6 @@ const App: FC = () => {
               mode,
               selectedModel,
               promptType,
-              aspectRatio,
-              enableAspectRatio,
               enableCharacterConsistency,
               scenario,  // scriptContext cho character dict
               kymaKey,
@@ -452,10 +448,6 @@ const App: FC = () => {
                         setPromptType={setPromptType}
                         selectedStyleId={selectedStyleId}
                         setSelectedStyleId={setSelectedStyleId}
-                        aspectRatio={aspectRatio}
-                        setAspectRatio={setAspectRatio}
-                        enableAspectRatio={enableAspectRatio}
-                        setEnableAspectRatio={setEnableAspectRatio}
                         enableCharacterConsistency={enableCharacterConsistency}
                         setEnableCharacterConsistency={setEnableCharacterConsistency}
                         selectedModel={selectedModel}
