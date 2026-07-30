@@ -9,7 +9,7 @@ import { ApiSettingsModal } from './components/modals/ApiSettingsModal';
 import { LibraryModal } from './components/modals/LibraryModal';
 import { GuideModal } from './components/modals/GuideModal';
 import { BookOpenIcon, LibraryIcon, KeyIcon, SparklesIcon, TextDocumentIcon, DownloadIcon } from './components/icons';
-import { analyzeScriptWithAIStream, analyzeScriptWithAIHybridStream } from './services/geminiService';
+import { analyzeScriptWithAIHybridStream } from './services/geminiService';
 
 const App: FC = () => {
   // State
@@ -21,13 +21,13 @@ const App: FC = () => {
   const [isBuilding, setIsBuilding] = useState<boolean>(false);
   const [buildProgress, setBuildProgress] = useState<number>(0);
   const [buildStatus, setBuildStatus] = useState<string>('');
-  const [segmentationMode, setSegmentationMode] = useState<'ai' | 'punctuation' | 'fixed'>('fixed');
   const [targetSceneCount, setTargetSceneCount] = useState<number>(10);
   const [promptType, setPromptType] = useState<PromptType>('image');
-  // KHỐI 4 (hybrid-segmentation): Hybrid mode + audio state (không breaking change)
-  const [useHybridMode, setUseHybridMode] = useState<boolean>(false);
+  // KHỐI B (hybrid v2): Audio source state - thay thế useHybridMode cũ
+  const [audioSource, setAudioSource] = useState<'srt' | 'txt'>('txt');
   const [audioDuration, setAudioDuration] = useState<number | undefined>(undefined);
   const [audioFileName, setAudioFileName] = useState<string | null>(null);
+  const [manualAudioDuration, setManualAudioDuration] = useState<number | undefined>(undefined);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [enableAspectRatio, setEnableAspectRatio] = useState<boolean>(false);
   const [enableCharacterConsistency, setEnableCharacterConsistency] = useState<boolean>(false);
@@ -150,13 +150,16 @@ const App: FC = () => {
   const handleScriptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      
+
       const reader = new FileReader();
       reader.onload = (event) => {
           const content = event.target?.result as string;
+          // KHỐI B (hybrid v2): Auto-detect SRT vs TXT
+          const isSrt = content.includes('-->') && (content.includes(',000') || content.includes('.000') || content.includes('\n1\n'));
+          setAudioSource(isSrt ? 'srt' : 'txt');
           setScriptFileName(file.name);
           setScenario(content);
-          addToast('success', 'Đã tải kịch bản', `Đã tải ${file.name}`);
+          addToast('success', 'Đã tải kịch bản', `${file.name} (${isSrt ? 'SRT' : 'TXT'})`);
       };
       reader.readAsText(file);
   };
@@ -164,6 +167,11 @@ const App: FC = () => {
   const handleBuildPrompts = async () => {
       if (!scenario) {
           addToast('error', 'Chưa có kịch bản', 'Vui lòng tải lên file kịch bản (.txt, .srt).');
+          return;
+      }
+      // KHỐI B (hybrid v2): Validate gate - TXT cần audio hoặc manual duration
+      if (audioSource === 'txt' && !audioFileName && !audioDuration && !manualAudioDuration) {
+          addToast('error', 'Thiếu Audio', 'Kịch bản TXT cần upload file audio hoặc nhập thời lượng voiceover để tính pacing.');
           return;
       }
       setIsBuilding(true);
@@ -203,40 +211,26 @@ const App: FC = () => {
           const expectedModel = kymaKey ? selectedKymaModel || 'deepseek-v4-flash' : selectedModel;
           addToast('info', 'Đang phân cảnh...', `Sử dụng ${expectedProvider} (${expectedModel}).`);
 
-          const stream = useHybridMode
-              ? analyzeScriptWithAIHybridStream(
-                    scenario,
-                    refImagesForService,
-                    effectiveKey,
-                    activeStylePrompt,
-                    mode,
-                    selectedModel,
-                    targetSceneCount,
-                    promptType,
-                    aspectRatio,
-                    enableAspectRatio,
-                    enableCharacterConsistency,
-                    kymaKey,
-                    selectedKymaModel || 'deepseek-v4-flash',
-                    audioDuration,
-                    false // enhanceWithAI - off by default (nhanh + 0 cost AI call cho enhancement)
-                )
-              : analyzeScriptWithAIStream(
-                    scenario,
-                    refImagesForService,
-                    effectiveKey,
-                    activeStylePrompt,
-                    mode,
-                    segmentationMode,
-                    selectedModel,
-                    targetSceneCount,
-                    promptType,
-                    aspectRatio,
-                    enableAspectRatio,
-                    enableCharacterConsistency,
-                    kymaKey,
-                    selectedKymaModel || 'deepseek-v4-flash'
-                );
+          // KHỐI B (hybrid v2): Luôn dùng analyzeScriptWithAIHybridStream, không còn nhánh if/else
+// Manual duration ưu tiên hơn file duration (vì user nhập tay = quyết định cuối cùng)
+const effectiveAudioDuration = manualAudioDuration ?? audioDuration;
+const stream = analyzeScriptWithAIHybridStream(
+          scenario,
+          refImagesForService,
+          effectiveKey,
+          activeStylePrompt,
+          mode,
+          selectedModel,
+          targetSceneCount,
+          promptType,
+          aspectRatio,
+          enableAspectRatio,
+          enableCharacterConsistency,
+          kymaKey,
+          selectedKymaModel || 'deepseek-v4-flash',
+          effectiveAudioDuration,
+          false // enhanceWithAI - off (default để nhanh + 0 cost; có thể bật sau nếu cần)
+      );
 
           let finalResults: { scenes: any[], provider: string, model: string, totalCount: number } | null = null;
           for await (const evt of stream) {
@@ -380,8 +374,6 @@ const App: FC = () => {
                         buildProgress={buildProgress}
                         buildStatus={buildStatus}
                         scriptFileName={scriptFileName}
-                        segmentationMode={segmentationMode}
-                        setSegmentationMode={setSegmentationMode}
                         hasPrompts={prompts.length > 0}
                         targetSceneCount={targetSceneCount}
                         setTargetSceneCount={setTargetSceneCount}
@@ -396,13 +388,14 @@ const App: FC = () => {
                         enableCharacterConsistency={enableCharacterConsistency}
                         setEnableCharacterConsistency={setEnableCharacterConsistency}
                         selectedModel={selectedModel}
-                        useHybridMode={useHybridMode}
-                        setUseHybridMode={setUseHybridMode}
+                        audioSource={audioSource}
                         audioFileName={audioFileName}
                         onAudioUpload={(duration, name) => {
                             setAudioDuration(duration);
                             setAudioFileName(name);
                         }}
+                        manualAudioDuration={manualAudioDuration}
+                        onManualDurationChange={setManualAudioDuration}
                     />
                 </div>
 

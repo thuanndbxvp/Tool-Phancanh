@@ -246,6 +246,12 @@ export const segmentByTimeline = (timeline: TimelineBlock[], targetSceneCount: n
     const totalDuration = timeline[timeline.length - 1].endTime;
     const targetSceneDuration = totalDuration / targetSceneCount;
 
+    // Early-Cut Strategy:
+    //   min_target = target - 2.5s  → vào vùng "có thể cắt" nếu gặp dấu câu
+    //   max_target = target + 4s    → hard limit, cắt cứng bất chấp dấu câu
+    const minTarget = Math.max(0, targetSceneDuration - 2.5);
+    const maxTarget = targetSceneDuration + 4;
+
     const scenes: string[] = [];
     let currentSceneText: string[] = [];
     let currentSceneStart = timeline[0].startTime;
@@ -255,21 +261,26 @@ export const segmentByTimeline = (timeline: TimelineBlock[], targetSceneCount: n
         currentSceneText.push(block.text);
 
         const currentDuration = block.endTime - currentSceneStart;
+        const isLastScene = scenes.length >= targetSceneCount - 1;
 
-        if (currentDuration >= targetSceneDuration && scenes.length < targetSceneCount - 1) {
-            let shouldBreak = false;
+        let shouldBreak = false;
+
+        if (currentDuration >= maxTarget) {
+            // HARD LIMIT: vượt ngưỡng max → cắt cứng, kể cả giữa câu
+            shouldBreak = true;
+        } else if (currentDuration >= minTarget && !isLastScene) {
+            // VÙNG EARLY-CUT: target - 2.5s đến target + 4s
+            // Chỉ cắt nếu gặp dấu câu → đảm bảo ngữ nghĩa trọn vẹn
             if (block.isPunctuationEnd) {
                 shouldBreak = true;
-            } else if (currentDuration > targetSceneDuration + 4) {
-                shouldBreak = true;
             }
+        }
 
-            if (shouldBreak) {
-                scenes.push(currentSceneText.join(' '));
-                currentSceneText = [];
-                if (i + 1 < timeline.length) {
-                    currentSceneStart = timeline[i + 1].startTime;
-                }
+        if (shouldBreak) {
+            scenes.push(currentSceneText.join(' '));
+            currentSceneText = [];
+            if (i + 1 < timeline.length) {
+                currentSceneStart = timeline[i + 1].startTime;
             }
         }
     }

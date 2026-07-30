@@ -33,18 +33,19 @@ interface ControlPanelProps {
   enableCharacterConsistency: boolean;
   setEnableCharacterConsistency: (enable: boolean) => void;
   selectedModel: string;
-  // KHỐI 4 (hybrid-segmentation): Optional - backward compat với code cũ
-  useHybridMode?: boolean;
-  setUseHybridMode?: (val: boolean) => void;
+  // KHỐI B (hybrid v2): Audio input
+  audioSource: 'srt' | 'txt';
   audioFileName?: string | null;
   onAudioUpload?: (duration: number | undefined, name: string | null) => void;
+  manualAudioDuration?: number;
+  onManualDurationChange?: (val: number | undefined) => void;
 }
 
 export const ControlPanel: FC<ControlPanelProps> = ({
     mode, setMode, scenario, setScenario, customStylePrompt, setCustomStylePrompt,
     onScriptUpload, onBuildPrompts, isBuilding, buildProgress, buildStatus,
     scriptFileName,
-    segmentationMode, setSegmentationMode, hasPrompts,
+    hasPrompts,
     targetSceneCount, setTargetSceneCount,
     promptType, setPromptType,
     selectedStyleId, setSelectedStyleId,
@@ -52,7 +53,7 @@ export const ControlPanel: FC<ControlPanelProps> = ({
     enableAspectRatio, setEnableAspectRatio,
     enableCharacterConsistency, setEnableCharacterConsistency,
     selectedModel,
-    useHybridMode, setUseHybridMode, audioFileName, onAudioUpload
+    audioSource, audioFileName, onAudioUpload, manualAudioDuration, onManualDurationChange
 }) => {
   const scriptFileRef = useRef<HTMLInputElement>(null);
   const [isCustomStyleExpanded, setIsCustomStyleExpanded] = useState(false);
@@ -249,99 +250,89 @@ export const ControlPanel: FC<ControlPanelProps> = ({
                 </div>
             </div>
 
-            {/* Segmentation Options & Generate Button Group */}
-            <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">✂️ Phương pháp phân cảnh (Pre-segmentation)</label>
-                <div className="grid grid-cols-3 gap-2 mb-4">
-                    <button
-                        onClick={() => setSegmentationMode('ai')}
-                        className={`p-2 rounded-xl text-xs font-bold transition-all border shadow-lg flex flex-col items-center gap-1 text-center ${segmentationMode === 'ai' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-500'}`}
-                    >
-                        <span>🤖 AI</span>
-                        <span className="font-medium opacity-70 text-[9px] leading-tight">Ngữ nghĩa</span>
-                    </button>
-                    <button
-                        onClick={() => setSegmentationMode('fixed')}
-                        className={`p-2 rounded-xl text-xs font-bold transition-all border shadow-lg flex flex-col items-center gap-1 text-center ${segmentationMode === 'fixed' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-500'}`}
-                    >
-                        <span>🔢 Chia đều</span>
-                        <span className="font-medium opacity-70 text-[9px] leading-tight">Bằng nhau</span>
-                    </button>
-                    <button
-                        onClick={() => setSegmentationMode('punctuation')}
-                        className={`p-2 rounded-xl text-xs font-bold transition-all border shadow-lg flex flex-col items-center gap-1 text-center ${segmentationMode === 'punctuation' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:border-slate-500'}`}
-                    >
-                        <span>📝 Dấu câu</span>
-                        <span className="font-medium opacity-70 text-[9px] leading-tight">Logic câu</span>
-                    </button>
+            {/* KHỐI B v2: 3 nút segmentation cũ đã bị ẩn theo yêu cầu sếp (Early-Cut Strategy) */}
 
-                     <div className={`col-span-3 p-2 rounded-xl border flex flex-col justify-center items-center transition-all duration-300 ${(segmentationMode === 'fixed' || segmentationMode === 'ai') ? 'bg-slate-900 border-emerald-500/50 opacity-100' : 'bg-slate-900/50 border-slate-800 opacity-40 pointer-events-none'}`}>
-                        <label className="text-[10px] font-bold text-slate-400 mb-1 uppercase text-center">Số lượng cảnh</label>
-                        <input 
-                            type="number" 
-                            min="1" 
-                            max="500"
-                            value={targetSceneCount}
-                            onChange={(e) => setTargetSceneCount(Math.max(1, parseInt(e.target.value) || 1))}
-                            className="w-full bg-slate-800 border border-slate-700 p-1.5 rounded text-center text-white text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
-                            disabled={segmentationMode !== 'fixed' && segmentationMode !== 'ai'}
-                        />
-                        {scenario.length > 50 && (segmentationMode === 'fixed' || segmentationMode === 'ai') && (
-                            <div className="mt-2 text-[10px] text-amber-500/80 leading-tight text-center">
-                                💡 Gợi ý (chuẩn Video 8s): <br/>
-                                <span className="font-bold text-emerald-400 cursor-pointer hover:underline" onClick={() => setTargetSceneCount(optimalSceneCount)}>
-                                    ~{optimalSceneCount} cảnh (Bấm để gán)
-                                </span>
-                            </div>
-                        )}
-                    </div>
+            {/* KHỐI B (hybrid v2): Smart Hybrid - 1 luồng duy nhất, cần audio nếu upload TXT */}
+            <div className="mb-4 p-4 bg-slate-900/60 rounded-xl border border-indigo-500/30">
+                <label className="block text-sm font-semibold text-slate-200 mb-3">
+                    ✂️ Phân cảnh thông minh (Smart Hybrid Timeline)
+                </label>
+
+                {/* Target scenes input */}
+                <div className="mb-3 p-3 bg-slate-900 border border-emerald-500/40 rounded-lg">
+                    <label className="text-[10px] font-bold text-slate-400 mb-1 uppercase block text-center">
+                        Số lượng cảnh mong muốn
+                    </label>
+                    <input
+                        type="number"
+                        min="1"
+                        max="500"
+                        value={targetSceneCount}
+                        onChange={(e) => setTargetSceneCount(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="w-full bg-slate-800 border border-slate-700 p-1.5 rounded text-center text-white text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                    {scenario.length > 50 && (
+                        <div className="mt-2 text-[10px] text-amber-500/80 leading-tight text-center">
+                            💡 Gợi ý (chuẩn Video 8s): <br/>
+                            <span className="font-bold text-emerald-400 cursor-pointer hover:underline" onClick={() => setTargetSceneCount(optimalSceneCount)}>
+                                ~{optimalSceneCount} cảnh (Bấm để gán)
+                            </span>
+                        </div>
+                    )}
                 </div>
 
-                {/* KHỐI 4 (hybrid-segmentation): Hybrid mode toggle + Audio upload */}
-                {setUseHybridMode && (
-                    <div className="mb-4 p-3 bg-slate-900/60 rounded-xl border border-indigo-500/30">
-                        <label className="flex items-center space-x-2 text-sm text-slate-200 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={useHybridMode ?? false}
-                                onChange={(e) => setUseHybridMode(e.target.checked)}
-                                className="form-checkbox h-4 w-4 text-indigo-500 rounded bg-slate-700 border-slate-600 focus:ring-indigo-500"
-                            />
-                            <span>🎬 Smart Hybrid (Timeline + AI tuỳ chọn)</span>
+                {/* Audio source - 2 options: upload file HOẶC nhập duration */}
+                {audioSource !== 'srt' && (
+                    <div className="mb-3 p-3 bg-slate-800/80 rounded-lg border border-amber-500/30">
+                        <label className="block text-xs font-semibold text-amber-400 mb-2">
+                            🎵 Audio Voiceover {audioSource === 'txt' && '(bắt buộc với TXT)'}
                         </label>
-                        <p className="mt-1 ml-6 text-[10px] text-slate-500 leading-tight">
-                            Tự detect SRT/TXT. Chia cảnh theo thời lượng thực tế, ưu tiên cắt tại dấu câu.
-                        </p>
-
-                        {useHybridMode && onAudioUpload && (
-                            <div className="mt-3">
-                                <label className="block text-xs font-medium text-slate-400 mb-1">🎵 Audio (tùy chọn, để nội suy thời lượng)</label>
-                                <input
-                                    type="file"
-                                    accept="audio/mp3, audio/wav, audio/mpeg"
-                                    onChange={(e) => {
-                                        const file = e.target.files?.[0];
-                                        if (file) {
-                                            const url = URL.createObjectURL(file);
-                                            const audio = new Audio(url);
-                                            audio.onloadedmetadata = () => {
-                                                onAudioUpload(audio.duration, file.name);
-                                                URL.revokeObjectURL(url);
-                                            };
-                                        } else {
-                                            onAudioUpload(undefined, null);
-                                        }
-                                    }}
-                                    className="block w-full text-xs text-slate-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-slate-700 file:text-indigo-400 hover:file:bg-slate-600"
-                                />
-                                {audioFileName && (
-                                    <p className="mt-1 text-xs text-emerald-400">Đã tải: {audioFileName}</p>
-                                )}
-                            </div>
+                        <input
+                            type="file"
+                            accept="audio/mp3, audio/wav, audio/mpeg"
+                            onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                    const url = URL.createObjectURL(file);
+                                    const audio = new Audio(url);
+                                    audio.onloadedmetadata = () => {
+                                        onAudioUpload?.(audio.duration, file.name);
+                                        URL.revokeObjectURL(url);
+                                    };
+                                } else {
+                                    onAudioUpload?.(undefined, null);
+                                }
+                            }}
+                            className="block w-full text-xs text-slate-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-slate-700 file:text-amber-400 hover:file:bg-slate-600"
+                        />
+                        {audioFileName && (
+                            <p className="mt-1 text-xs text-emerald-400">Đã tải: {audioFileName}</p>
+                        )}
+                        <div className="mt-3 flex items-center gap-2">
+                            <span className="text-xs text-slate-500">hoặc nhập thời lượng (giây):</span>
+                            <input
+                                type="number"
+                                min="1"
+                                max="7200"
+                                value={manualAudioDuration ?? ''}
+                                placeholder="vd: 120"
+                                onChange={(e) => {
+                                    const val = parseInt(e.target.value);
+                                    onManualDurationChange?.(isNaN(val) ? undefined : val);
+                                }}
+                                className="flex-1 bg-slate-800 border border-slate-700 p-1 rounded text-center text-white text-xs focus:ring-1 focus:ring-amber-500 outline-none"
+                            />
+                        </div>
+                        {audioSource === 'txt' && !audioFileName && !manualAudioDuration && (
+                            <p className="mt-2 text-[10px] text-rose-400 leading-tight">
+                                ⚠️ Kịch bản TXT cần audio (file hoặc nhập thời lượng) để tính pacing chính xác.
+                            </p>
                         )}
                     </div>
                 )}
+            </div>
 
+            <div>
                 <button
                     onClick={onBuildPrompts}
                     disabled={!canBuild || isBuilding}
