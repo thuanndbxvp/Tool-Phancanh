@@ -281,18 +281,20 @@ const generateBatchStream = async function* (
     }
 
     const ai = new GoogleGenAI({ apiKey: keyToUse.split(',')[0].trim() });
-    // Retry the whole stream generation up to 2 times on transient errors
-    // (429 rate limit, 503 unavailable, network timeout). Non-transient
-    // errors throw immediately.
-    const RETRYABLE_PATTERNS = ['429', '503', 'unavailable', 'timeout', 'fetch failed', 'econnreset'];
+    // Retry the whole stream generation up to 3 times on transient errors
+    // (429 rate limit, 503 unavailable, 500 server, network timeout).
+    // Pattern học từ auto-edit-video-main/services/prompt_service.py
+    // (_call_batch_async: max_retries=4 với exponential backoff).
+    const RETRYABLE_PATTERNS = ['429', '500', '503', 'unavailable', 'timeout', 'fetch failed', 'econnreset', 'rate limit'];
     const isRetryable = (e: any) => {
         const msg = String(e?.message || e || '').toLowerCase();
         return RETRYABLE_PATTERNS.some(p => msg.includes(p));
     };
 
+    const MAX_RETRIES = 3;
     let stream: AsyncIterable<any> | null = null;
     let lastError: any = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
             stream = await ai.models.generateContentStream({
                 model: modelName,
@@ -313,9 +315,11 @@ const generateBatchStream = async function* (
             break;
         } catch (e) {
             lastError = e;
-            if (!isRetryable(e) || attempt === 1) throw e;
-            console.warn(`Batch stream attempt ${attempt + 1} failed (${e?.message || e}); retrying in 2s...`);
-            await new Promise(r => setTimeout(r, 2000));
+            if (!isRetryable(e) || attempt === MAX_RETRIES - 1) throw e;
+            // Exponential backoff: 2s, 4s, 8s
+            const delayMs = 2000 * Math.pow(2, attempt);
+            console.warn(`Batch stream attempt ${attempt + 1}/${MAX_RETRIES} failed (${(e as Error)?.message || e}); retrying in ${delayMs}ms...`);
+            await new Promise(r => setTimeout(r, delayMs));
         }
     }
     if (!stream) throw lastError || new Error("Stream init failed");
@@ -323,6 +327,7 @@ const generateBatchStream = async function* (
     const objectRegex = /\{(?:[^{}]|\{[^{}]*\})*\}/g;
     let buffer = '';
     let index = 0;
+    const yieldedIndices = new Set<number>();
     for await (const chunk of stream) {
         const chunkText = chunk.text || '';
         buffer += chunkText;
@@ -331,6 +336,9 @@ const generateBatchStream = async function* (
             for (const m of matches) {
                 try {
                     const scene = JSON.parse(m);
+                    // Skip if we've already yielded this index (safety)
+                    if (yieldedIndices.has(index)) continue;
+                    yieldedIndices.add(index);
                     yield { index: index++, scene };
                     buffer = buffer.replace(m, '');
                 } catch {
@@ -339,6 +347,64 @@ const generateBatchStream = async function* (
             }
         }
     }
+};
+
+/**
+ * Per-scene retry: gọi AI riêng từng scene bị thiếu (batch=1).
+ * Học pattern từ auto-edit-video-main/services/prompt_service.py:
+ *   _call_batch_async detect empty_idx trong batch → retry.
+ * Ở đây ta tách luôn: nếu streaming batch bị fail/empty → gọi lại
+ * TỪNG scene với batch_size=1 → tăng tỉ lệ thành công gần 100%.
+ *
+ * Returns array of {scriptLine, imagePrompt, videoPrompt} | null (null = still failed)
+ */
+const retryMissingScenesOneByOne = async (
+    missingIndices: number[],
+    allLines: string[],
+    systemInstruction: string,
+    promptGenerationInstruction: string,
+    styleLock: string,
+    modelName: string,
+    apiKey: string,
+    kymaKey?: string,
+    kymaModelName: string = 'gpt-4o-mini'
+): Promise<(any | null)[]> => {
+    const results: (any | null)[] = [];
+    // Limit concurrency to 3 to avoid hammering Gemini
+    const CONCURRENT_RETRY = 3;
+    let cursor = 0;
+
+    const worker = async (): Promise<void> => {
+        while (cursor < missingIndices.length) {
+            const idx = cursor++;
+            const sceneIdx = missingIndices[idx];
+            const line = allLines[sceneIdx];
+            try {
+                const gen = generateBatchStream(
+                    [line], systemInstruction, promptGenerationInstruction,
+                    modelName, apiKey, kymaKey, kymaModelName
+                );
+                for await (const { scene } of gen) {
+                    results[idx] = {
+                        scriptLine: line,
+                        imagePrompt: (styleLock && scene.imagePrompt) ? `${styleLock}, ${scene.imagePrompt}` : (scene.imagePrompt || ""),
+                        videoPrompt: (styleLock && scene.videoPrompt) ? `${styleLock}, ${scene.videoPrompt}` : (scene.videoPrompt || "")
+                    };
+                    break; // Only first scene needed
+                }
+                // If generator yielded nothing → still null
+                if (!results[idx]) results[idx] = null;
+            } catch (e) {
+                console.warn(`Per-scene retry cảnh ${sceneIdx + 1} failed:`, e);
+                results[idx] = null;
+            }
+        }
+    };
+
+    const workers = Array(Math.min(CONCURRENT_RETRY, missingIndices.length))
+        .fill(0).map(() => worker());
+    await Promise.all(workers);
+    return results;
 };
 
 const fetchSceneAnchors = async (
@@ -905,31 +971,35 @@ ${promptGenerationInstruction}`;
         yield evt;
     }
 
-    // Fix #3: Nếu stream bị ngắt giữa chừng, fill missing scenes bằng placeholder
+    // Fix #3: Nếu stream bị ngắt giữa chừng → retry TỪNG scene lẻ trước khi fill placeholder
     const filledCount = finalScenes.filter(Boolean).length;
     if (filledCount < segmentedLines.length) {
-        const missingCount = segmentedLines.length - filledCount;
-        console.warn(`Stream chỉ nhận ${filledCount}/${segmentedLines.length} scenes, đang fill ${missingCount} placeholder...`);
         const missingIndices: number[] = [];
         for (let i = 0; i < segmentedLines.length; i++) {
             if (!finalScenes[i]) missingIndices.push(i);
         }
+        const missingCount = missingIndices.length;
+        console.warn(`Stream chỉ nhận ${filledCount}/${segmentedLines.length} scenes, đang retry ${missingCount} scenes lẻ (one-by-one)...`);
 
-        // Water-fill missing positions
-        const remainingSentences = missingIndices.map((idx, k) => ({
-            idx: k,
-            text: segmentedLines[idx],
-            wordCount: segmentedLines[idx].split(/\s+/).filter(w => w.length > 0).length
-        }));
-        const fills = segmentByWaterFilling(remainingSentences, Math.min(missingCount, remainingSentences.length));
+        // Per-scene retry: gọi AI riêng từng scene với batch_size=1
+        const retryResults = await retryMissingScenesOneByOne(
+            missingIndices, segmentedLines,
+            batchSystemInstruction, promptGenerationInstruction,
+            styleLock, modelName, apiKey, kymaKey, kymaModelName
+        );
 
         for (let k = 0; k < missingIndices.length; k++) {
-            const sceneText = fills[k] || segmentedLines[missingIndices[k]];
-            finalScenes[missingIndices[k]] = {
-                scriptLine: sceneText,
-                imagePrompt: styleLock ? `${styleLock}, (placeholder - AI stream bị ngắt)` : "(placeholder - AI stream bị ngắt)",
-                videoPrompt: styleLock ? `${styleLock}, (placeholder - AI stream bị ngắt)` : "(placeholder - AI stream bị ngắt)"
-            };
+            const sceneIdx = missingIndices[k];
+            if (retryResults[k]) {
+                finalScenes[sceneIdx] = retryResults[k];
+            } else {
+                // Vẫn fail → placeholder
+                finalScenes[sceneIdx] = {
+                    scriptLine: segmentedLines[sceneIdx],
+                    imagePrompt: styleLock ? `${styleLock}, (placeholder - AI retry failed)` : "(placeholder - AI retry failed)",
+                    videoPrompt: styleLock ? `${styleLock}, (placeholder - AI retry failed)` : "(placeholder - AI retry failed)"
+                };
+            }
         }
     }
 
@@ -1116,7 +1186,7 @@ For each input scriptLine, generate a JSON object with:
 ${promptGenerationInstruction}`;
 
     // 3. STREAMING BATCH PROCESSING
-    const BATCH_SIZE = 4;
+    const BATCH_SIZE = 5;
     const batches: string[][] = [];
     for (let i = 0; i < segmentedLines.length; i += BATCH_SIZE) {
         batches.push(segmentedLines.slice(i, i + BATCH_SIZE));
@@ -1170,7 +1240,7 @@ ${promptGenerationInstruction}`;
     }
 
     async function* mergeGenerators() {
-        const MAX_CONCURRENT = 4;
+        const MAX_CONCURRENT = 5;
         const pending: AsyncGenerator<ProgressEvent>[] = generators.map((_, i) => consumeGenerator(i));
         const iters = pending.map(g => g[Symbol.asyncIterator]());
 
@@ -1206,14 +1276,28 @@ ${promptGenerationInstruction}`;
 
     const filledCount = finalScenes.filter(Boolean).length;
     if (filledCount < segmentedLines.length) {
-        const missingCount = segmentedLines.length - filledCount;
-        console.warn(`Stream thiếu ${missingCount} cảnh. Fill placeholder.`);
+        const missingIndices: number[] = [];
         for (let i = 0; i < segmentedLines.length; i++) {
-            if (!finalScenes[i]) {
-                finalScenes[i] = {
-                    scriptLine: segmentedLines[i],
-                    imagePrompt: styleLock ? `${styleLock}, scene placeholder` : "scene placeholder",
-                    videoPrompt: styleLock ? `${styleLock}, video placeholder` : "video placeholder"
+            if (!finalScenes[i]) missingIndices.push(i);
+        }
+        const missingCount = missingIndices.length;
+        console.warn(`Stream thiếu ${missingCount} cảnh. Retry từng scene lẻ...`);
+
+        const retryResults = await retryMissingScenesOneByOne(
+            missingIndices, segmentedLines,
+            batchSystemInstruction, promptGenerationInstruction,
+            styleLock, modelName, apiKey, kymaKey, kymaModelName
+        );
+
+        for (let k = 0; k < missingIndices.length; k++) {
+            const sceneIdx = missingIndices[k];
+            if (retryResults[k]) {
+                finalScenes[sceneIdx] = retryResults[k];
+            } else {
+                finalScenes[sceneIdx] = {
+                    scriptLine: segmentedLines[sceneIdx],
+                    imagePrompt: styleLock ? `${styleLock}, (placeholder - AI retry failed)` : "(placeholder - AI retry failed)",
+                    videoPrompt: styleLock ? `${styleLock}, (placeholder - AI retry failed)` : "(placeholder - AI retry failed)"
                 };
             }
         }
@@ -1335,7 +1419,7 @@ For each input scriptLine, generate a JSON object with:
 ${promptGenerationInstruction}`;
 
     // 3. BATCH PROCESSING
-    const BATCH_SIZE = 4;
+    const BATCH_SIZE = 5;
     const batches: string[][] = [];
     for (let i = 0; i < sceneLines.length; i += BATCH_SIZE) {
         batches.push(sceneLines.slice(i, i + BATCH_SIZE));
@@ -1389,7 +1473,7 @@ ${promptGenerationInstruction}`;
     }
 
     async function* mergeGenerators() {
-        const MAX_CONCURRENT = 4;
+        const MAX_CONCURRENT = 5;
         const pending: AsyncGenerator<ProgressEvent>[] = generators.map((_, i) => consumeGenerator(i));
         const iters = pending.map(g => g[Symbol.asyncIterator]());
 
@@ -1425,14 +1509,28 @@ ${promptGenerationInstruction}`;
 
     const filledCount = finalScenes.filter(Boolean).length;
     if (filledCount < sceneLines.length) {
-        const missingCount = sceneLines.length - filledCount;
-        console.warn(`Stream thiếu ${missingCount} cảnh. Fill placeholder.`);
+        const missingIndices: number[] = [];
         for (let i = 0; i < sceneLines.length; i++) {
-            if (!finalScenes[i]) {
-                finalScenes[i] = {
-                    scriptLine: sceneLines[i],
-                    imagePrompt: styleLock ? `${styleLock}, scene placeholder` : "scene placeholder",
-                    videoPrompt: styleLock ? `${styleLock}, video placeholder` : "video placeholder"
+            if (!finalScenes[i]) missingIndices.push(i);
+        }
+        const missingCount = missingIndices.length;
+        console.warn(`Stream thiếu ${missingCount} cảnh. Retry từng scene lẻ...`);
+
+        const retryResults = await retryMissingScenesOneByOne(
+            missingIndices, sceneLines,
+            batchSystemInstruction, promptGenerationInstruction,
+            styleLock, modelName, apiKey, kymaKey, kymaModelName
+        );
+
+        for (let k = 0; k < missingIndices.length; k++) {
+            const sceneIdx = missingIndices[k];
+            if (retryResults[k]) {
+                finalScenes[sceneIdx] = retryResults[k];
+            } else {
+                finalScenes[sceneIdx] = {
+                    scriptLine: sceneLines[sceneIdx],
+                    imagePrompt: styleLock ? `${styleLock}, (placeholder - AI retry failed)` : "(placeholder - AI retry failed)",
+                    videoPrompt: styleLock ? `${styleLock}, (placeholder - AI retry failed)` : "(placeholder - AI retry failed)"
                 };
             }
         }
