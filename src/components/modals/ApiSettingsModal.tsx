@@ -36,10 +36,8 @@ export const ApiSettingsModal: FC<{
         setIsCheckingKyma(true);
         setKymaCheckMsg(null);
         try {
-            const res = await fetch('https://kymaapi.com/v1/models', {
-                headers: { 'Authorization': `Bearer ${tempKyma.trim()}` }
-            });
-            if (res.ok) {
+            const isValid = await validateApiKey(tempKyma.trim(), 'kyma');
+            if (isValid) {
                 setKymaCheckMsg({ text: 'API Key hợp lệ! Đã lưu.', type: 'success' });
                 setKymaKey(tempKyma.trim());
                 localStorage.setItem('sbgen_kyma_key', tempKyma.trim());

@@ -282,12 +282,13 @@ const generateBatchStream = async function* (
 
     // Pattern học từ _call_batch_async:
     //   - max_retries = 4
-    //   - exponential backoff: 2s, 4s, 6s, 8s
+    //   - exponential backoff mạnh: 3s, 8s, 15s, 25s, 40s — giảm risk 429 khi batch nặng
     //   - Model fallback: 429/404 → đổi model tiếp theo trong chain
-    const MAX_RETRIES = 4;
+    const MAX_RETRIES = 5;
     let lastError: any = null;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        const delayMs = 2000 * (attempt + 1);
+        // 3s, 8s, 15s, 25s, 40s — phù hợp cho Gemini free-tier quota window
+        const delayMs = attempt === 0 ? 3000 : 3000 + (attempt * 5000);
         try {
             const response = await ai.models.generateContent({
                 model: modelName,
@@ -781,7 +782,8 @@ ${commonStyleInjection}${characterDictionaryStr}
         batches.push(segmentedLines.slice(i, i + BATCH_SIZE));
     }
 
-    const MAX_CONCURRENCY = Math.min(5, batches.length);
+    // Kyma thì khỏe (5 luồng), Gemini free-tier chỉ 2 để né 429
+    const MAX_CONCURRENCY = Math.min(kymaKey ? 5 : 2, batches.length);
     let finalScenes: any[] = new Array(segmentedLines.length);
     let completedScenesCount = 0;
 
@@ -955,7 +957,8 @@ ${promptGenerationInstruction}`;
         batches.push(segmentedLines.slice(i, i + BATCH_SIZE));
     }
 
-    const MAX_CONCURRENCY = Math.min(5, batches.length);
+    // Kyma thì khỏe (5 luồng), Gemini free-tier chỉ 2 để né 429
+    const MAX_CONCURRENCY = Math.min(kymaKey ? 5 : 2, batches.length);
     const finalScenes: any[] = new Array(segmentedLines.length);
     let completedCount = 0;
 
@@ -1305,7 +1308,8 @@ ${promptGenerationInstruction}`;
     }
 
     async function* mergeGenerators() {
-        const MAX_CONCURRENT = 5;
+        // Kyma khỏe thì 5, Gemini Free thì 2 để tránh 429
+        const MAX_CONCURRENT = kymaKey ? 5 : 2;
         const pending: AsyncGenerator<ProgressEvent>[] = generators.map((_, i) => consumeGenerator(i));
         const iters = pending.map(g => g[Symbol.asyncIterator]());
 
@@ -1538,7 +1542,8 @@ ${promptGenerationInstruction}`;
     }
 
     async function* mergeGenerators() {
-        const MAX_CONCURRENT = 5;
+        // Kyma khỏe thì 5, Gemini Free thì 2 để tránh 429
+        const MAX_CONCURRENT = kymaKey ? 5 : 2;
         const pending: AsyncGenerator<ProgressEvent>[] = generators.map((_, i) => consumeGenerator(i));
         const iters = pending.map(g => g[Symbol.asyncIterator]());
 
