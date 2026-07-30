@@ -50,6 +50,13 @@ export const ApiSettingsModal: FC<{
         setIsCheckingKyma(false);
     };
 
+    const handleDeleteKymaKey = () => {
+        setKymaKey('');
+        setTempKyma('');
+        localStorage.removeItem('sbgen_kyma_key');
+        setKymaCheckMsg({ text: 'Đã xóa Kyma API Key.', type: 'success' });
+    };
+
     const handleAddKey = async () => {
         if (!newKey.trim()) return;
         setGeminiCheckMsg(null);
@@ -226,6 +233,15 @@ export const ApiSettingsModal: FC<{
                                         placeholder="Nhập API Key của Kyma (sk-...)"
                                         className="flex-1 bg-slate-800 border border-slate-700 p-2.5 rounded-md focus:ring-2 focus:ring-emerald-500 text-white text-sm"
                                     />
+                                    {kymaKey && (
+                                        <button
+                                            onClick={handleDeleteKymaKey}
+                                            className="bg-slate-700 hover:bg-red-600 text-white px-3 py-2 rounded-md transition-colors flex items-center justify-center"
+                                            title="Xóa Key hiện tại"
+                                        >
+                                            <TrashIcon className="h-5 w-5" />
+                                        </button>
+                                    )}
                                     <button
                                         onClick={handleCheckKymaKey}
                                         disabled={isCheckingKyma || !tempKyma.trim()}
